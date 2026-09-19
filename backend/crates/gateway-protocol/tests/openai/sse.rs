@@ -6,6 +6,22 @@ use gateway_protocol::openai::sse::{
 };
 use serde_json::json;
 
+#[test]
+fn done_events_are_opt_in_and_survive_arbitrary_chunk_boundaries() {
+    let input = b"data: {\"ok\":true}\r\n\r\ndata: [DONE]\r\n\r\n";
+    for split in 0..=input.len() {
+        let mut decoder = SseEventDecoder::default().with_done_events();
+        let mut events = decoder.push(&input[..split]).unwrap();
+        events.extend(decoder.push(&input[split..]).unwrap());
+        assert_eq!(events.len(), 2, "split={split}");
+        assert_eq!(events[1].data, "[DONE]");
+    }
+    assert_eq!(SseEventDecoder::default().push(input).unwrap().len(), 1);
+    let mut decoder = SseEventDecoder::default().with_done_events();
+    assert!(decoder.push(b"data: [DONE]").unwrap().is_empty());
+    assert_eq!(decoder.finish().unwrap()[0].data, "[DONE]");
+}
+
 fn sse_body_has_done(body: &str) -> bool {
     body.trim_end_matches(['\r', '\n'])
         .ends_with(DONE_SSE_FRAME.trim_end_matches(['\r', '\n']))

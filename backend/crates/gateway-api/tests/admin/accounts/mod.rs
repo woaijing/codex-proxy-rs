@@ -969,3 +969,33 @@ mod import_settings {
         }
     }
 }
+#[test]
+fn opencode_credentials_accept_tiers_and_reject_openai_material() {
+    use gateway_api::admin::accounts::{AccountImportRequest, RotateAccountRequest};
+    let import:AccountImportRequest=serde_json::from_value(serde_json::json!({"provider":"opencode","data":{"accounts":[{"name":"go","tier":"go","api_key":"test-key"}]}})).unwrap();
+    assert!(import.validate().is_ok());
+    for body in [
+        serde_json::json!({"provider":"opencode","accountId":"acct_test","tier":"go"}),
+        serde_json::json!({"provider":"opencode","accountId":"acct_test","apiKey":"new-test-key"}),
+    ] {
+        assert!(
+            serde_json::from_value::<RotateAccountRequest>(body)
+                .unwrap()
+                .validate()
+                .is_ok()
+        );
+    }
+    for body in [
+        serde_json::json!({"provider":"opencode","accountId":"acct_test","baseUrl":"https://example.com","transport":"http"}),
+        serde_json::json!({"provider":"opencode","accountId":"acct_test","accessToken":"token"}),
+        serde_json::json!({"provider":"opencode","accountId":"acct_test","tier":"invalid"}),
+        serde_json::json!({"provider":"opencode","accountId":"acct_test","apiKey":"key\r\nx-header: value"}),
+    ] {
+        assert!(
+            serde_json::from_value::<RotateAccountRequest>(body)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+    }
+}

@@ -1,5 +1,5 @@
 import type { Ref } from 'vue'
-import type { AccountModelAccess, ApiKeyConfiguration, getAccounts } from '@/api'
+import type { AccountModelAccess, ApiKeyConfiguration, getAccounts, OpenCodeKeyConfiguration } from '@/api'
 
 import { computed, ref, shallowRef, watch } from 'vue'
 import { getAccountDetail, updateAccount, updateAccountApiKey } from '@/api'
@@ -33,7 +33,7 @@ export function useAccountEditor(options: {
   const configurationRequest = useRequestState()
   const configurationLoading = configurationRequest.loading
   const configurationReady = shallowRef(false)
-  const savedConfiguration = shallowRef<ApiKeyConfiguration>()
+  const savedConfiguration = shallowRef<ApiKeyConfiguration | OpenCodeKeyConfiguration>()
 
   async function loadConfiguration(accountId: string) {
     const requestId = configurationRequest.start()
@@ -89,7 +89,7 @@ export function useAccountEditor(options: {
     if (isApiKey) {
       if (!configurationReady.value)
         return
-      const error = apiKeyAccountError(apiKey.value, true)
+      const error = apiKeyAccountError(apiKey.value, true, editingAccount.value?.provider)
       if (error) {
         toast.warning(error)
         return
@@ -123,11 +123,14 @@ export function useAccountEditor(options: {
       }
       const connectionChanged = isApiKey && (
         apiKey.value.apiKey !== ''
-        || apiKey.value.base_url.trim() !== savedConfiguration.value?.base_url
-        || apiKey.value.transport !== savedConfiguration.value?.transport
+        || (savedConfiguration.value && 'tier' in savedConfiguration.value
+          ? apiKey.value.tier !== savedConfiguration.value.tier
+          : apiKey.value.base_url.trim() !== savedConfiguration.value?.base_url || apiKey.value.transport !== savedConfiguration.value?.transport)
       )
       if (connectionChanged) {
-        await updateAccountApiKey({ accountId, baseUrl: apiKey.value.base_url.trim(), transport: apiKey.value.transport, apiKey: apiKey.value.apiKey || undefined, settings })
+        await updateAccountApiKey(editingAccount.value?.provider === 'opencode'
+          ? { provider: 'opencode', accountId, tier: apiKey.value.tier, apiKey: apiKey.value.apiKey || undefined, settings }
+          : { accountId, baseUrl: apiKey.value.base_url.trim(), transport: apiKey.value.transport, apiKey: apiKey.value.apiKey || undefined, settings })
       }
       else {
         await updateAccount(settings)

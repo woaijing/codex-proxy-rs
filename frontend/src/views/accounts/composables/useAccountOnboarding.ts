@@ -16,7 +16,7 @@ import { accountImportSettings, accountProxyError, emptyAccountCreateForm } from
 import { apiKeyAccountError, emptyApiKeyAccountForm } from '../utils/upstreamApiKey'
 
 type AccountRow = Awaited<ReturnType<typeof getAccounts>>['items'][number]
-type ImportProvider = 'openai' | 'xai'
+type ImportProvider = 'openai' | 'xai' | 'opencode'
 
 interface MixedImportDocument {
   provider: ImportProvider
@@ -72,17 +72,17 @@ export function useAccountOnboarding(options: {
           throw new Error('请选择凭据导入方式')
         if (mode === 'api_key') {
           const provider = requireImportProvider(createForm.value.provider)
-          if (provider !== 'openai')
+          if (provider !== 'openai' && provider !== 'opencode')
             throw new Error('当前平台不支持 API Key 账号')
           const form = createForm.value.apiKey
-          const error = apiKeyAccountError(form)
+          const error = apiKeyAccountError(form, false, provider)
           if (error)
             throw new Error(error)
           await importAccounts({
             provider,
             settings: accountImportSettings(createForm.value),
             outboundProxyId: createForm.value.proxyMode === 'proxy' ? createForm.value.proxyId.trim() : undefined,
-            data: { provider, authentication_kind: 'api_key', name: form.name.trim(), base_url: form.base_url.trim(), api_key: form.apiKey, transport: form.transport },
+            data: provider === 'opencode' ? { provider, accounts: [{ name: form.name.trim(), api_key: form.apiKey, tier: form.tier }] } : { provider, authentication_kind: 'api_key', name: form.name.trim(), base_url: form.base_url.trim(), api_key: form.apiKey, transport: form.transport },
           })
           await finishCreate('API Key 账号已添加')
           return
@@ -212,7 +212,7 @@ export function useAccountOnboarding(options: {
     () => {
       createForm.value = {
         ...createForm.value,
-        mode: createForm.value.provider === 'batch' ? 'json' : 'oauth',
+        mode: createForm.value.provider === 'batch' ? 'json' : createForm.value.provider === 'opencode' ? 'api_key' : 'oauth',
         apiKey: emptyApiKeyAccountForm(),
         importTexts: { access_token: '', refresh_token: '', json: '' },
         oauthFlowId: '',

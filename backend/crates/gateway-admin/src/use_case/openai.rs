@@ -1,4 +1,4 @@
-//! OpenAI 管理资源的中立 ProviderAdmin 委托。
+//! Provider 中立凭据事务；保留 OpenAI 路由的兼容服务名称。
 
 use std::sync::Arc;
 
@@ -25,9 +25,9 @@ use super::{
     validate_prepared_import, validate_prepared_rotation,
 };
 
-/// OpenAI 固定管理路由消费的服务。
+/// 已绑定 Provider 的凭据管理服务。
 #[async_trait]
-pub trait OpenAiService: Send + Sync {
+pub trait CredentialsService: Send + Sync {
     async fn import_document(
         &self,
         command: ImportCredentials,
@@ -50,14 +50,14 @@ pub trait OpenAiService: Send + Sync {
     ) -> Result<CredentialDeletionResult, AdminError>;
 }
 
-pub(crate) struct DefaultOpenAiService {
+pub(crate) struct DefaultCredentialsService {
     provider: Arc<dyn ProviderAdmin>,
     accounts: Arc<dyn AccountStore>,
     proxies: Arc<dyn crate::ports::proxy::ProxyStore>,
     snapshot: Arc<dyn SnapshotControl>,
 }
 
-impl DefaultOpenAiService {
+impl DefaultCredentialsService {
     #[must_use]
     pub(crate) fn new(
         provider: Arc<dyn ProviderAdmin>,
@@ -75,7 +75,7 @@ impl DefaultOpenAiService {
 }
 
 #[async_trait]
-impl OpenAiService for DefaultOpenAiService {
+impl CredentialsService for DefaultCredentialsService {
     async fn import_document(
         &self,
         command: ImportCredentials,
@@ -98,11 +98,11 @@ impl OpenAiService for DefaultOpenAiService {
                 document: command.document,
             })
             .await
-            .map_err(|error| map_provider_error(error, "OpenAI credential import"))?;
+            .map_err(|error| map_provider_error(error, "Provider credential import"))?;
         validate_prepared_import(
             self.provider.provider_kind(),
             &prepared,
-            "OpenAI credential import",
+            "Provider credential import",
         )?;
         let result = self
             .accounts
@@ -115,7 +115,7 @@ impl OpenAiService for DefaultOpenAiService {
                 &context,
             )
             .await
-            .map_err(|error| map_store_error(error, "OpenAI credential import"))?;
+            .map_err(|error| map_store_error(error, "Provider credential import"))?;
         drop(proxy_reservation);
         publish_credentials_and_observe_quota(
             &self.provider,
@@ -137,13 +137,13 @@ impl OpenAiService for DefaultOpenAiService {
             self.proxies.as_ref(),
             self.provider.provider_kind(),
             &command,
-            "OpenAI credential",
+            "Provider credential",
         )
         .await?;
         self.provider
             .start_authorization(pending)
             .await
-            .map_err(|error| map_provider_error(error, "OpenAI authorization"))
+            .map_err(|error| map_provider_error(error, "Provider authorization"))
     }
 
     async fn complete_authorization(
@@ -156,12 +156,12 @@ impl OpenAiService for DefaultOpenAiService {
             .provider
             .complete_authorization(command)
             .await
-            .map_err(|error| map_provider_error(error, "OpenAI authorization"))?;
+            .map_err(|error| map_provider_error(error, "Provider authorization"))?;
         let prepared = validate_authorization_commit(
             self.provider.provider_kind(),
             &context,
             prepared,
-            "OpenAI authorization",
+            "Provider authorization",
         )
         .await?;
         let result = commit_authorization(
@@ -169,7 +169,7 @@ impl OpenAiService for DefaultOpenAiService {
             prepared,
             settings,
             &context,
-            "OpenAI authorization",
+            "Provider authorization",
         )
         .await?;
         publish_credentials_and_observe_quota(
@@ -204,7 +204,7 @@ impl OpenAiService for DefaultOpenAiService {
             self.accounts.as_ref(),
             self.provider.provider_kind(),
             &account_id,
-            "OpenAI credential rotation",
+            "Provider credential rotation",
         )
         .await?;
         let account = details.credential;
@@ -215,14 +215,14 @@ impl OpenAiService for DefaultOpenAiService {
                 provider_material: command.provider_material,
             })
             .await
-            .map_err(|error| map_provider_error(error, "OpenAI credential rotation"))?;
-        validate_prepared_rotation(&account, &prepared, "OpenAI credential rotation")?;
+            .map_err(|error| map_provider_error(error, "Provider credential rotation"))?;
+        validate_prepared_rotation(&account, &prepared, "Provider credential rotation")?;
         let result = commit_credential_rotation(
             self.accounts.as_ref(),
             prepared,
             command.settings,
             &context,
-            "OpenAI credential rotation",
+            "Provider credential rotation",
         )
         .await?;
         if disable_account {
@@ -243,10 +243,13 @@ impl OpenAiService for DefaultOpenAiService {
             self.accounts.as_ref(),
             self.provider.as_ref(),
             command,
-            "OpenAI credential",
+            "Provider credential",
         )
         .await?;
         publish_committed(self.snapshot.as_ref(), result.config_revision).await?;
         Ok(result)
     }
 }
+
+pub use CredentialsService as OpenAiService;
+pub(crate) use DefaultCredentialsService as DefaultOpenAiService;

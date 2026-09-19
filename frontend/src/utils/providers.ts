@@ -1,6 +1,7 @@
 export const PROVIDER_DISPLAY_NAMES = {
   openai: 'OpenAI',
   xai: 'xAI',
+  opencode: 'OpenCode',
 } as const
 
 export type SupportedProvider = keyof typeof PROVIDER_DISPLAY_NAMES

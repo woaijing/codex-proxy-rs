@@ -644,8 +644,12 @@ export interface ApiKeyConfiguration {
   transport: 'http' | 'prefer_websocket'
 }
 
+export interface OpenCodeKeyConfiguration {
+  tier: 'zen' | 'go'
+}
+
 export function getAccountDetail(data: AccountIdParam, options: RequestOptions = {}) {
-  return request<{ account: Account, credentialConfiguration?: ApiKeyConfiguration }>({
+  return request<{ account: Account, credentialConfiguration?: ApiKeyConfiguration | OpenCodeKeyConfiguration }>({
     url: '/api/admin/accounts/detail',
     method: 'GET',
     params: data,
@@ -653,7 +657,7 @@ export function getAccountDetail(data: AccountIdParam, options: RequestOptions =
   })
 }
 
-export function updateAccountApiKey(data: { accountId: string, baseUrl: string, transport: ApiKeyConfiguration['transport'], apiKey?: string, settings?: AccountUpdateParam }) {
+export function updateAccountApiKey(data: { accountId: string, apiKey?: string, settings?: AccountUpdateParam } & ({ provider?: 'openai', baseUrl: string, transport: ApiKeyConfiguration['transport'] } | { provider: 'opencode', tier: OpenCodeKeyConfiguration['tier'] })) {
   return request<{ accountId: string }>({
     url: '/api/admin/accounts/rotate',
     method: 'POST',

@@ -737,6 +737,7 @@ dependencies = [
  "gateway-host",
  "gateway-store",
  "provider-openai",
+ "provider-opencode",
  "provider-xai",
  "serde",
  "serde_json",
@@ -2776,6 +2777,30 @@ dependencies = [
  "xz2",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "provider-opencode"
+version = "0.0.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "gateway-admin",
+ "gateway-api",
+ "gateway-core",
+ "gateway-protocol",
+ "httpdate",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]

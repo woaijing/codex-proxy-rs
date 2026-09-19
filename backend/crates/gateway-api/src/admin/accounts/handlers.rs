@@ -177,6 +177,14 @@ where
                 .await
         }
         AccountProvider::Xai => state.admin_services().xai().import_document(command).await,
+        AccountProvider::OpenCode => {
+            state
+                .admin_services()
+                .credentials("opencode")
+                .map_err(map_service_error)?
+                .import_document(command)
+                .await
+        }
     }
     .map_err(map_service_error)?;
     Ok(AdminResponse::new(
@@ -197,6 +205,14 @@ where
         .into_command(auth.context().mutation_context())
         .map_err(map_wire_error)?;
     let result = match provider {
+        AccountProvider::OpenCode => {
+            state
+                .admin_services()
+                .credentials("opencode")
+                .map_err(map_service_error)?
+                .start_authorization(command)
+                .await
+        }
         AccountProvider::OpenAi => {
             state
                 .admin_services()
@@ -231,6 +247,14 @@ where
         .into_command(auth.context().mutation_context())
         .map_err(map_wire_error)?;
     let result = match provider {
+        AccountProvider::OpenCode => {
+            state
+                .admin_services()
+                .credentials("opencode")
+                .map_err(map_service_error)?
+                .complete_authorization(command)
+                .await
+        }
         AccountProvider::OpenAi => {
             state
                 .admin_services()
@@ -261,12 +285,14 @@ async fn rotate_account<S>(
 where
     S: SessionState + Send + Sync,
 {
+    let provider = request.provider.trim().to_owned();
     let command = request
         .into_command(auth.context().mutation_context())
         .map_err(map_wire_error)?;
     let result = state
         .admin_services()
-        .openai()
+        .credentials(&provider)
+        .map_err(map_service_error)?
         .rotate(command)
         .await
         .map_err(map_service_error)?;
@@ -311,6 +337,14 @@ where
     let result = match provider {
         AccountProvider::OpenAi => state.admin_services().openai().delete(command).await,
         AccountProvider::Xai => state.admin_services().xai().delete(command).await,
+        AccountProvider::OpenCode => {
+            state
+                .admin_services()
+                .credentials("opencode")
+                .map_err(map_service_error)?
+                .delete(command)
+                .await
+        }
     }
     .map_err(map_service_error)?;
     Ok(AdminResponse::new(

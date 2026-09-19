@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AccountCreateProvider } from './model'
 import { Openai, Xai } from '@boxicons/vue'
-import { LayoutGrid } from '@lucide/vue'
+import { Code, LayoutGrid } from '@lucide/vue'
 import BaseSegmented from '@/components/base/BaseSegmented.vue'
 import { PROVIDER_DISPLAY_NAMES } from '@/utils/providers'
 
@@ -16,7 +16,7 @@ withDefaults(
 )
 
 const emit = defineEmits<{
-  select: [provider: 'openai' | 'xai' | 'batch']
+  select: [provider: AccountCreateProvider]
 }>()
 
 const providers = [
@@ -35,6 +35,7 @@ const providers = [
     label: PROVIDER_DISPLAY_NAMES.xai,
     icon: Xai,
   },
+  { value: 'opencode' as const, label: PROVIDER_DISPLAY_NAMES.opencode, icon: Code },
 ]
 
 function selectProvider(value: string) {

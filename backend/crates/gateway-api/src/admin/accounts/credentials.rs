@@ -18,6 +18,7 @@ fn validate_account_notes(notes: Option<&str>) -> Result<(), WireValidationError
 pub(super) enum AccountProvider {
     OpenAi,
     Xai,
+    OpenCode,
 }
 
 impl AccountProvider {
@@ -25,6 +26,7 @@ impl AccountProvider {
         match value.trim() {
             "openai" => Ok(Self::OpenAi),
             "xai" => Ok(Self::Xai),
+            "opencode" => Ok(Self::OpenCode),
             _ => Err(WireValidationError::new("provider")),
         }
     }
@@ -186,6 +188,7 @@ impl CompleteAccountAuthorizationRequest {
                 }
             }
             AccountProvider::Xai => require_wire_id(&self.flow_id, "flowId")?,
+            AccountProvider::OpenCode => return Err(WireValidationError::new("provider")),
         }
         require_text(&self.callback_url, MAX_CALLBACK_URL_BYTES, "callbackUrl")
     }
@@ -325,12 +328,14 @@ pub struct RotateAccountRequest {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub transport: Option<String>,
+    pub tier: Option<String>,
     pub settings: Option<UpdateAccountRequest>,
 }
 
 impl RotateAccountRequest {
     pub fn validate(&self) -> Result<(), WireValidationError> {
-        if AccountProvider::parse(&self.provider)? != AccountProvider::OpenAi {
+        let provider = AccountProvider::parse(&self.provider)?;
+        if provider == AccountProvider::Xai {
             return Err(WireValidationError::new("provider"));
         }
         require_account_id(&self.account_id, "accountId")?;
@@ -339,6 +344,27 @@ impl RotateAccountRequest {
             if settings.account_id != self.account_id {
                 return Err(WireValidationError::new("settings.accountId"));
             }
+        }
+        if provider == AccountProvider::OpenCode {
+            if self.access_token.is_some()
+                || self.refresh_token.is_some()
+                || self.id_token.is_some()
+                || self.base_url.is_some()
+                || self.transport.is_some()
+                || self
+                    .tier
+                    .as_deref()
+                    .is_some_and(|tier| !matches!(tier, "zen" | "go"))
+                || self.api_key.as_ref().is_some_and(|key| {
+                    key.len() > 4096 || !key.bytes().all(|byte| byte.is_ascii_graphic())
+                })
+            {
+                return Err(WireValidationError::new("credential"));
+            }
+            return Ok(());
+        }
+        if self.tier.is_some() {
+            return Err(WireValidationError::new("tier"));
         }
         if let Some(base_url) = &self.base_url {
             if self.access_token.is_some()
@@ -376,7 +402,14 @@ impl RotateAccountRequest {
     ) -> Result<RotateCredential, WireValidationError> {
         self.validate()?;
         let mut material = Map::new();
-        if let Some(base_url) = self.base_url {
+        if self.provider.trim() == "opencode" {
+            if let Some(key) = self.api_key {
+                material.insert("api_key".to_owned(), Value::String(key));
+            }
+            if let Some(tier) = self.tier {
+                material.insert("tier".to_owned(), Value::String(tier));
+            }
+        } else if let Some(base_url) = self.base_url {
             material.insert("base_url".to_owned(), Value::String(base_url));
             material.insert(
                 "transport".to_owned(),

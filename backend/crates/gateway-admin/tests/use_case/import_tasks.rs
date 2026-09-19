@@ -54,6 +54,30 @@ async fn harness() -> (AdminBundle, Arc<FakeProviderAdmin>, EventLog) {
     (bundle, provider, log)
 }
 
+#[tokio::test]
+async fn registered_opencode_import_uses_shared_transaction_and_worker() {
+    let log = events();
+    let mut bundle = AdminHarness::new()
+        .provider(FakeProviderAdmin::new("opencode", log.clone()))
+        .accounts(FakeAccountStore::new("opencode", log.clone()))
+        .build_bundle()
+        .await;
+    let services = bundle.services();
+    let mut input = command(Uuid::now_v7(), 1);
+    input.items[0].provider = ProviderKind::new("opencode").unwrap();
+    let task = services.import_tasks().submit(input).unwrap();
+    let (cancellation, worker) = start(&mut bundle);
+    wait_finished(&services, task.task_id).await;
+    let detail = services
+        .import_tasks()
+        .detail(&context("poll"), task.task_id)
+        .unwrap();
+    assert_eq!(detail.summary.counts.succeeded, 1);
+    assert!(recorded(&log).contains(&"provider.prepare_import"));
+    cancellation.cancel();
+    worker.await.unwrap();
+}
+
 fn start(bundle: &mut AdminBundle) -> (CancellationToken, tokio::task::JoinHandle<()>) {
     let registration = bundle
         .take_worker_contributions()

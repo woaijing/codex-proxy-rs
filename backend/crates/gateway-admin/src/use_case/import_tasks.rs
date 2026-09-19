@@ -131,15 +131,21 @@ pub(crate) struct DefaultImportTasksService {
     notify: Notify,
     openai: Arc<dyn OpenAiService>,
     xai: Arc<dyn XaiService>,
+    credentials: std::collections::BTreeMap<String, Arc<dyn crate::CredentialsService>>,
 }
 
 impl DefaultImportTasksService {
-    pub(crate) fn new(openai: Arc<dyn OpenAiService>, xai: Arc<dyn XaiService>) -> Arc<Self> {
+    pub(crate) fn new(
+        openai: Arc<dyn OpenAiService>,
+        xai: Arc<dyn XaiService>,
+        credentials: std::collections::BTreeMap<String, Arc<dyn crate::CredentialsService>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             registry: Mutex::default(),
             notify: Notify::new(),
             openai,
             xai,
+            credentials,
         })
     }
 
@@ -180,7 +186,10 @@ impl DefaultImportTasksService {
             match input.provider.as_str() {
                 "openai" => self.openai.import_document(input.command).await,
                 "xai" => self.xai.import_document(input.command).await,
-                _ => Err(AdminError::invalid("不支持的导入平台")),
+                _ => match self.credentials.get(input.provider.as_str()) {
+                    Some(service) => service.import_document(input.command).await,
+                    None => Err(AdminError::invalid("不支持的导入平台")),
+                },
             }
         };
         let result = AssertUnwindSafe(operation).catch_unwind().await;
@@ -222,7 +231,7 @@ impl ImportTasksService for DefaultImportTasksService {
         if command.items.is_empty()
             || command.items.len() > MAX_IMPORT_TASK_ITEMS
             || command.items.iter().any(|item| {
-                !matches!(item.provider.as_str(), "openai" | "xai")
+                !self.credentials.contains_key(item.provider.as_str())
                     || item.command.context.actor != command.context.actor
             })
         {

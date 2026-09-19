@@ -18,6 +18,7 @@ pub(super) const WORKSPACE_MEMBERS: &[&str] = &[
     "crates/gateway-protocol",
     "crates/gateway-store",
     "crates/providers/openai",
+    "crates/providers/opencode",
     "crates/providers/xai",
 ];
 
@@ -57,6 +58,7 @@ fn gateway_core_depends_on_no_http_db_redis_or_provider_crate() {
             "gateway-store",
             "provider-openai",
             "provider-xai",
+            "provider-opencode",
         ],
     );
 }
@@ -151,8 +153,18 @@ fn gateway_protocol_has_no_workspace_dependencies() {
 
 #[test]
 fn provider_crates_do_not_depend_on_each_other() {
-    assert_no_dependency("crates/providers/openai", &["provider-xai"]);
-    assert_no_dependency("crates/providers/xai", &["provider-openai"]);
+    assert_no_dependency(
+        "crates/providers/openai",
+        &["provider-xai", "provider-opencode"],
+    );
+    assert_no_dependency(
+        "crates/providers/xai",
+        &["provider-openai", "provider-opencode"],
+    );
+    assert_no_dependency(
+        "crates/providers/opencode",
+        &["provider-openai", "provider-xai"],
+    );
 }
 
 #[test]
@@ -174,10 +186,12 @@ const PACKAGE_TO_MEMBER: &[(&str, &str)] = &[
     ("gateway-store", "crates/gateway-store"),
     ("provider-openai", "crates/providers/openai"),
     ("provider-xai", "crates/providers/xai"),
+    ("provider-opencode", "crates/providers/opencode"),
 ];
 
 /// Adapter/provider 根门面的稳定合同模块；任何增减都必须同步完成边界审计。
 const ADAPTER_PUBLIC_MODULES: &[(&str, &[&str])] = &[
+    ("crates/providers/opencode", &[]),
     ("crates/gateway-api", &["admin", "auth", "openai"]),
     (
         "crates/gateway-host",
@@ -217,6 +231,10 @@ const ALLOWED_INTERNAL_EDGES: &[(&str, &str)] = &[
     ("codex-proxy-rs", "gateway-store"),
     ("codex-proxy-rs", "provider-openai"),
     ("codex-proxy-rs", "provider-xai"),
+    ("codex-proxy-rs", "provider-opencode"),
+    ("provider-opencode", "gateway-admin"),
+    ("provider-opencode", "gateway-core"),
+    ("provider-opencode", "gateway-protocol"),
     ("gateway-admin", "gateway-core"),
     ("gateway-api", "gateway-admin"),
     ("gateway-api", "gateway-core"),

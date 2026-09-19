@@ -18,6 +18,7 @@ const modeOptions = {
     { label: 'RT', value: 'refresh_token' },
     { label: '账号文件', value: 'json' },
   ],
+  opencode: [{ label: 'API Key', value: 'api_key' }, { label: '账号文件', value: 'json' }],
   xai: [
     { label: 'OAuth', value: 'oauth' },
     { label: '账号文件', value: 'json' },
@@ -44,7 +45,7 @@ export function resolveAccountCreatePresentation(input: AccountCreatePresentatio
 }
 
 function resolveModeOptions(provider: AccountCreateProvider | undefined) {
-  if (provider === 'openai' || provider === 'xai')
+  if (provider === 'openai' || provider === 'xai' || provider === 'opencode')
     return modeOptions[provider]
   return []
 }
@@ -75,6 +76,8 @@ function resolveModal(
   let description = '粘贴或上传包含 OAuth Token 的 JSON，匹配已有账号时更新凭据'
   if (provider === 'batch')
     description = '粘贴或上传 CPR 账号包，一次导入多个平台账号'
+  else if (provider === 'opencode')
+    description = '使用 OpenCode 控制台生成的 Zen 或 Go API Key'
   else if (provider === 'xai' && input.form.mode === 'oauth')
     description = '通过浏览器授权导入 xAI 账号'
   else if (provider === 'xai')
@@ -172,7 +175,7 @@ function canSubmit(
   if (!provider || input.saving || input.oauthLoading)
     return false
   if (input.form.mode === 'api_key')
-    return !apiKeyAccountError(input.form.apiKey)
+    return !apiKeyAccountError(input.form.apiKey, false, provider)
   if (input.form.mode !== 'oauth')
     return input.form.importTexts[input.form.mode].trim().length > 0
   return Boolean(
@@ -183,5 +186,5 @@ function canSubmit(
 }
 
 function isAccountCreateProvider(value: string): value is AccountCreateProvider {
-  return value === 'openai' || value === 'xai' || value === 'batch'
+  return value === 'openai' || value === 'xai' || value === 'batch' || value === 'opencode'
 }

@@ -8,6 +8,7 @@ members = [
     "crates/gateway-protocol",
     "crates/gateway-store",
     "crates/providers/openai",
+    "crates/providers/opencode",
     "crates/providers/xai",
 ]
 resolver = "3"

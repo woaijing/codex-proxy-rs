@@ -4,7 +4,7 @@ import { accountModelAccessError } from '../../utils/modelAccess'
 import { parseAccountSchedulingForm } from '../../utils/schedulingForm'
 import { emptyApiKeyAccountForm } from '../../utils/upstreamApiKey'
 
-export type AccountCreateProvider = 'batch' | 'openai' | 'xai'
+export type AccountCreateProvider = 'batch' | 'openai' | 'xai' | 'opencode'
 export type AccountImportMode = 'oauth' | 'api_key' | 'access_token' | 'refresh_token' | 'json'
 export type AccountImportInputMode = Exclude<AccountImportMode, 'oauth' | 'api_key'>
 

@@ -26,11 +26,19 @@ mod use_case;
 pub use use_case::key_usage::KeyUsageService;
 
 pub use use_case::{
-    account_groups::AccountGroupService, accounts::AccountsService, auth::AuthService,
-    backup::BackupService, client_distribution::ClientDistributionService,
-    client_keys::ClientKeyService, import_tasks::ImportTasksService,
-    observability::ObservabilityService, openai::OpenAiService, proxies::ProxiesService,
-    settings::SettingsService, system::SystemService, xai::XaiService,
+    account_groups::AccountGroupService,
+    accounts::AccountsService,
+    auth::AuthService,
+    backup::BackupService,
+    client_distribution::ClientDistributionService,
+    client_keys::ClientKeyService,
+    import_tasks::ImportTasksService,
+    observability::ObservabilityService,
+    openai::{CredentialsService, OpenAiService},
+    proxies::ProxiesService,
+    settings::SettingsService,
+    system::SystemService,
+    xai::XaiService,
 };
 
 use model::{AdminError, AdminErrorKind};
@@ -192,6 +200,7 @@ pub struct AdminServices {
     observability: Arc<dyn ObservabilityService>,
     settings: Arc<dyn SettingsService>,
     system: Arc<dyn SystemService>,
+    credentials: std::collections::BTreeMap<String, Arc<dyn CredentialsService>>,
     openai: Arc<dyn OpenAiService>,
     xai: Arc<dyn XaiService>,
     backups: Arc<dyn BackupService>,
@@ -199,6 +208,14 @@ pub struct AdminServices {
 }
 
 impl AdminServices {
+    /// 按已注册平台复用凭据事务，未知平台不能进入其它 Provider。
+    pub fn credentials(&self, provider: &str) -> Result<&dyn CredentialsService, AdminError> {
+        self.credentials
+            .get(provider)
+            .map(AsRef::as_ref)
+            .ok_or_else(|| AdminError::invalid("不支持的平台"))
+    }
+
     #[must_use]
     pub fn import_tasks(&self) -> &dyn ImportTasksService {
         self.import_tasks.as_ref()
@@ -333,6 +350,18 @@ pub async fn initialize(
     client_config
         .resolve_and_validate(Path::new("."))
         .map_err(|error| AdminError::invalid(error.to_string()))?;
+    let credentials = providers
+        .iter()
+        .map(|provider| {
+            let service: Arc<dyn CredentialsService> = Arc::new(DefaultOpenAiService::new(
+                Arc::clone(provider),
+                store.accounts(),
+                store.proxies(),
+                snapshot.clone(),
+            ));
+            (provider.provider_kind().as_str().to_owned(), service)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     let registry = ProviderAdminRegistry::new(providers).map_err(map_provider_registry_error)?;
     let openai = registry
         .require(&provider_kind(OPENAI_PROVIDER_KIND)?)
@@ -388,10 +417,14 @@ pub async fn initialize(
         store.proxies(),
         snapshot.clone(),
     ));
-    let import_tasks =
-        use_case::import_tasks::DefaultImportTasksService::new(openai.clone(), xai.clone());
+    let import_tasks = use_case::import_tasks::DefaultImportTasksService::new(
+        openai.clone(),
+        xai.clone(),
+        credentials.clone(),
+    );
     let import_task = use_case::import_tasks::ImportTaskWorker(import_tasks.clone());
     let services = AdminServices {
+        credentials,
         key_usage,
         proxies: Arc::new(use_case::proxies::DefaultProxiesService::new(
             store.proxies(),

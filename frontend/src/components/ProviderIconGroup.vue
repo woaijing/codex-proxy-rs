@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Key, LinkAlt, Openai, Xai } from '@boxicons/vue'
+import { Code } from '@lucide/vue'
 import { computed } from 'vue'
 import { formatProviderLabel } from '@/utils/providers'
 
@@ -53,6 +54,7 @@ const authenticationLabel = computed(() => {
     >
       <Openai v-if="normalizedProvider === 'openai'" :class="iconClass" />
       <Xai v-else-if="normalizedProvider === 'xai'" :class="iconClass" />
+      <Code v-else-if="normalizedProvider === 'opencode'" :class="iconClass" />
       <span v-else class="text-[10px] font-heavy text-cp-text-quaternary">?</span>
     </span>
 

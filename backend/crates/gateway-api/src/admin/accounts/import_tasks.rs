@@ -155,6 +155,7 @@ where
             let provider = ProviderKind::new(match provider {
                 AccountProvider::OpenAi => "openai",
                 AccountProvider::Xai => "xai",
+                AccountProvider::OpenCode => "opencode",
             })
             .map_err(|_| WireValidationError::new("provider"))?;
             Ok(ImportTaskInput { provider, command })

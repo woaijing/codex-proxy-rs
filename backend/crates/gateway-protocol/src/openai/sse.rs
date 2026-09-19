@@ -81,6 +81,7 @@ pub struct SseEventDecoder {
     opaque_frame: bool,
     /// 只有整个 SSE 流的第一条物理行允许携带 UTF-8 BOM。
     stream_start: bool,
+    retain_done: bool,
 }
 
 impl Default for SseEventDecoder {
@@ -90,11 +91,19 @@ impl Default for SseEventDecoder {
             scanned: 0,
             opaque_frame: false,
             stream_start: true,
+            retain_done: false,
         }
     }
 }
 
 impl SseEventDecoder {
+    /// 保留 `[DONE]` 控制事件，供需要验证 Chat Completions 终态的适配器使用。
+    #[must_use]
+    pub fn with_done_events(mut self) -> Self {
+        self.retain_done = true;
+        self
+    }
+
     /// 返回从 `consumed` 起的下一个完整帧结束位置（含分隔符），并推进扫描边界。
     fn next_frame_end(&mut self, consumed: usize) -> Option<usize> {
         // `\r\n\r\n` 分隔符可能跨 chunk 边界，扫描起点回退 3 字节。
@@ -128,7 +137,11 @@ impl SseEventDecoder {
         while let Some(end) = self.next_frame_end(consumed) {
             let frame = std::str::from_utf8(&self.pending[consumed..end])
                 .map_err(|error| SseError::ParseError(error.to_string()))?;
-            events.extend(parse_sse_events_inner(frame, self.stream_start)?);
+            events.extend(parse_sse_events_with_done(
+                frame,
+                self.stream_start,
+                self.retain_done,
+            )?);
             self.stream_start = false;
             consumed = end;
         }
@@ -188,7 +201,7 @@ impl SseEventDecoder {
         let pending = std::mem::take(&mut self.pending);
         let frame = std::str::from_utf8(&pending)
             .map_err(|error| SseError::ParseError(error.to_string()))?;
-        let events = parse_sse_events_inner(frame, self.stream_start)?;
+        let events = parse_sse_events_with_done(frame, self.stream_start, self.retain_done)?;
         self.stream_start = false;
         Ok(events)
     }
@@ -368,6 +381,7 @@ pub enum SseError {
 
 #[derive(Debug, Default)]
 struct EventBuilder {
+    retain_done: bool,
     event: Option<String>,
     data: String,
     has_data: bool,
@@ -392,7 +406,7 @@ impl EventBuilder {
             return None;
         }
         self.has_data = false;
-        if self.data == "[DONE]" {
+        if self.data == "[DONE]" && !self.retain_done {
             self.event = None;
             self.id = None;
             self.retry = None;
@@ -414,8 +428,19 @@ pub fn parse_sse_events(input: &str) -> Result<Vec<SseEvent>, SseError> {
 }
 
 fn parse_sse_events_inner(input: &str, strip_leading_bom: bool) -> Result<Vec<SseEvent>, SseError> {
+    parse_sse_events_with_done(input, strip_leading_bom, false)
+}
+
+fn parse_sse_events_with_done(
+    input: &str,
+    strip_leading_bom: bool,
+    retain_done: bool,
+) -> Result<Vec<SseEvent>, SseError> {
     let mut events = Vec::new();
-    let mut builder = EventBuilder::default();
+    let mut builder = EventBuilder {
+        retain_done,
+        ..EventBuilder::default()
+    };
     let mut saw_sse_syntax = false;
     let mut event_buffer_bytes = 0usize;
 

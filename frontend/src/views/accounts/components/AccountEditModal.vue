@@ -73,7 +73,7 @@ const selectedGroupIds = defineModel<string[]>('selectedGroupIds', { required: t
         <p v-else-if="!configurationReady" role="alert" class="m-0 text-cp-sm text-cp-error">
           上游设置读取失败，请关闭后重试
         </p>
-        <AccountApiKeyFields v-else v-model="apiKey" editing :disabled="saving" />
+        <AccountApiKeyFields v-else v-model="apiKey" :provider="account.provider" editing :disabled="saving" />
       </section>
 
       <AccountSettingsFields

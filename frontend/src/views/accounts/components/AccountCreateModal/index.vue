@@ -153,7 +153,7 @@ function continueToImport() {
           :disabled="busy"
           @regenerate="emit('generateOauth')"
         />
-        <AccountApiKeyFields v-else-if="mode === 'api_key'" v-model="form.apiKey" :disabled="busy" />
+        <AccountApiKeyFields v-else-if="mode === 'api_key'" v-model="form.apiKey" :provider="form.provider" :disabled="busy" />
         <AccountImportFields
           v-else
           :key="mode"

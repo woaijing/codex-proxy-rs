@@ -74,9 +74,14 @@ pub async fn run() -> Result<(), BootstrapError> {
     let provider_ports = store.provider_ports();
     let mut openai = provider_openai::initialize(openai, provider_ports.clone()).await?;
     host.report_startup_ready("OpenAI Provider");
-    let mut xai = provider_xai::initialize(xai, provider_ports).await?;
+    let mut xai = provider_xai::initialize(xai, provider_ports.clone()).await?;
     host.report_startup_ready("xAI Provider");
-    let providers = ProviderRegistry::new([openai.core_provider(), xai.core_provider()])?;
+    let opencode = provider_opencode::initialize(provider_ports)?;
+    let providers = ProviderRegistry::new([
+        openai.core_provider(),
+        xai.core_provider(),
+        opencode.core_provider(),
+    ])?;
     let mut core = gateway_core::initialize(store.core_ports(), providers).await?;
     host.report_startup_ready("Core");
     let mut admin = gateway_admin::initialize(
@@ -85,7 +90,11 @@ pub async fn run() -> Result<(), BootstrapError> {
         store.admin_ports(),
         gateway_admin::AdminRuntimePorts {
             pricing_source: std::sync::Arc::new(gateway_host::pricing::ModelsDevPricing),
-            providers: vec![openai.admin_provider(), xai.admin_provider()],
+            providers: vec![
+                openai.admin_provider(),
+                xai.admin_provider(),
+                opencode.admin_provider(),
+            ],
             snapshot: core.snapshot_control(),
             account_probe: core.account_probe(),
             proxy_probe: host.proxy_probe(provider_openai::build_reqwest_client_with_custom_ca),
@@ -124,6 +133,8 @@ pub async fn run() -> Result<(), BootstrapError> {
 /// 组合根只保留包级错误分类，不展开内部实现或敏感配置。
 #[derive(Debug, thiserror::Error)]
 pub enum BootstrapError {
+    #[error(transparent)]
+    OpenCode(#[from] provider_opencode::OpenCodeInitializeError),
     #[error(transparent)]
     Config(#[from] gateway_host::ConfigError),
     #[error(transparent)]

@@ -22,7 +22,7 @@ Codex 原生生图配置还会携带 `X-OpenAI-Actor-Authorization: proxy-manage
 上游账号身份只由服务端选中的账号提供；不要把真实账号 token 放进该标记。
 
 Client Key 通过账号分组限定路由范围：未绑定分组时可使用全部账号，绑定一个或多个分组时只能使用
-已启用分组成员的并集。分组可以混合 `openai` 与 `xai` 账号；同一请求只会在模型能力明确匹配且满足
+已启用分组成员的并集。分组可以混合 `openai`、`xai` 与 `opencode` 账号；同一请求只会在模型能力明确匹配且满足
 重放安全边界时跨 Provider fallback。
 
 运行设置可以分别配置 `minCodexDesktopVersion` 与 `minCodexCliVersion`。两者只接受 SemVer，`null`
@@ -356,7 +356,7 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 ## 5. 账号
 
 账号 API 使用统一路由，不存在 Provider Instance 或 Provider 专属账号路由。需要 Provider 的请求只接受
-`provider: "openai" | "xai"`。
+`provider: "openai" | "xai" | "opencode"`。
 
 | 方法 | 路由 | 主要 query/body | 说明 |
 | --- | --- | --- | --- |
@@ -370,7 +370,7 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 | `POST` | `/api/admin/accounts/import-tasks/stop` | `{ taskId }` | 跳过未开始的条目，已开始的条目继续完成 |
 | `POST` | `/api/admin/accounts/refresh` | `{ accountId }` | 手工刷新 OAuth credential（`idToken` / `accessToken` / `refreshToken`），不刷新额度 |
 | `POST` | `/api/admin/accounts/recover` | `{ accountId }` | 管理员显式清除该账号的本地错误/额度/cooldown 事实并重新启用，不访问上游 |
-| `POST` | `/api/admin/accounts/rotate` | OpenAI rotation 字段 | 更新指定 OpenAI 账号的 OAuth token 或 API Key 上游设置 |
+| `POST` | `/api/admin/accounts/rotate` | 对应平台 rotation 字段 | 更新 OpenAI OAuth token、OpenAI API Key 设置或 OpenCode Key / 产品 |
 | `POST` | `/api/admin/accounts/update` | `{ accountId, enabled, concurrencyLimit, weight, groupIds, notes?, modelAccess?, outboundProxyId?, outboundProxyUrl? }` | 一次更新账号备注、调度状态、并发上限（`null` 表示继承运行参数）、权重（1–100）、所属分组与出站代理 |
 | `POST` | `/api/admin/accounts/batch-update` | `{ accountIds, enabled?, concurrencyLimit?, weight?, groupIds?, modelAccess?, outboundProxyId?, outboundProxyUrl? }` | 一次事务更新所选账号；仅修改提供的字段，至少提供一项修改 |
 | `POST` | `/api/admin/accounts/delete` | `{ provider, accountIds }` | 批量删除 1–200 个账号 |
@@ -388,7 +388,7 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 
 账号列表支持以下稳定值：
 
-- `provider`: `all`、`openai`、`xai`；
+- `provider`: `all`、`openai`、`xai`、`opencode`；
 - `groupId`: 分组 ID、`ungrouped`，或省略以不过滤；
 - `status`: `normal`、`quota_exhausted`、`rate_limited`、`disabled`、`error`；
 - `sortBy`: `email`、`status`、`planType`、`usage`、`lastUsedAt`、`expiresAt`；
@@ -560,7 +560,7 @@ JSON 文件按 Provider 文档分项，不拆解内部代理引用或改变 Prov
 - xAI API Key 不是受支持的账号 credential；
 - OAuth 导入由目标 Provider 完成必要的 token exchange 或身份投影。API Key 导入校验凭据格式与地址，不调用 OAuth 或 ChatGPT 身份接口；可用性由模型目录和连接测试验证。
 
-API Key 账号使用以下独立凭据形态：
+OpenAI API Key 账号使用以下独立凭据形态：
 
 ```json
 {
@@ -587,7 +587,7 @@ sub2api 的 `platform=openai`、`type=apikey` 使用 `credentials.base_url` / `c
 导入时按其端点规则将服务根、版本前缀或完整 `/responses` 地址转换为 API 前缀，缺省地址为官方 `/v1`。
 非空模型映射、请求头覆盖、其他协议和启用的 `extra.openai_*` 设置尚未适配，返回输入错误，需先移除并在本项目重新配置。
 
-API Key 账号与 OAuth 共用现有 Responses、Images 和 standalone Search 请求与响应链路，
+OpenAI API Key 账号与 OAuth 共用现有 Responses、Images 和 standalone Search 请求与响应链路，
 包括 Responses Lite 和原生压缩协议的透传，实际支持情况由上游决定；不提供独立 compact 路由。
 模型目录、连接测试和本地用量统计可用；OAuth 刷新/重新授权、ChatGPT 额度、个人资料、订阅和重置卡不适用。
 客户端的 `image_generation` 和 `X-OpenAI-Actor-Authorization` 声明不改变账号的实际能力。
@@ -640,7 +640,7 @@ API Key rotation 使用 `{ provider: "openai", accountId, baseUrl, transport, ap
 省略 `apiKey` 保留当前密钥，空字符串无效；账号 ID 和认证类型不能通过轮换转换。
 rotation 可选携带 `settings`，字段与 `POST /api/admin/accounts/update` 相同，其中 `accountId` 必须与外层一致。
 凭据与设置在同一事务中保存，任一校验或持久化失败均不落库；省略 `settings` 保留现有分组、调度等设置。
-`GET /api/admin/accounts/detail` 对 API Key 账号额外返回 `credentialConfiguration: { base_url, transport }`，不回显密钥。
+`GET /api/admin/accounts/detail` 对 OpenAI API Key 账号额外返回 `credentialConfiguration: { base_url, transport }`，不回显密钥。
 更新会推进凭据 revision 并失效目录与连接；旧版本会话不可静默续接到新上游。
 
 OAuth start 使用：
@@ -656,6 +656,53 @@ OAuth start 使用：
 重新授权已有账号时，start 请求仍携带 `provider` 和展示用 `name`，只额外提供目标 `accountId`；
 客户端不得提交 `credentialRevision`、旧 token 身份或其他并发控制字段。complete 请求也不重复提交
 `accountId`，后端通过 `flowId` 中保存的目标绑定完成授权。
+
+### OpenCode Zen / Go API Key
+
+管理端选择 OpenCode 后可添加、编辑、删除、导出 Key，配置分组、权重、并发与绑定代理。支持控制台生成的 API Key；
+不提供 OpenCode 账号密码登录或 OAuth 导入。同步导入接口和后台导入任务都接受以下文档（`accounts` 为 1–1000 项）：
+
+```json
+{
+  "provider": "opencode",
+  "data": {
+    "accounts": [
+      { "name": "Zen key", "tier": "zen", "api_key": "example-key" },
+      { "name": "Go key", "tier": "go", "api_key": "example-go-key" }
+    ]
+  }
+}
+```
+
+`tier` 省略时为 `zen`。`outboundProxyId` 和 `settings` 使用导入接口的公共字段；Key 按现有凭据合同以明文 JSON 存入 PostgreSQL，
+数据库与备份须按敏感数据保护。每次导入创建独立账号，
+更新现有账号请调用 `rotate`。同一个 Key 不应重复导入为多个账号，以免把其并发与冷却状态拆开。
+轮换使用 `{ provider: "opencode", accountId, apiKey?, tier?, settings? }`；Key 省略或留空时保留，产品省略时保留，
+Key 与设置在同一事务内保存。普通详情只返回 `credentialConfiguration: { tier }`；敏感导出会包含完整 Key。
+
+客户端继续使用 `/v1/responses`。Provider 按产品和模型目录选择 Zen `/zen/v1` 或 Go `/zen/go/v1` 下的
+Responses、Chat Completions、Messages 接口，返回 Responses 格式的流式或完整 JSON 响应。
+Messages 使用 `x-api-key`，其它两种使用 Bearer，认证材料始终取自所选账号。
+文本、图片输入、function 工具调用和工具结果可转换，实际模型能力以上游为准。
+Chat/Messages 模型需要提交完整历史，不支持 `previous_response_id`、后台执行、内置或 custom 工具；
+Messages 转换暂不支持显式推理强度和 JSON 输出格式。Responses 推理项不会作为 Anthropic 签名块重放。
+翻译响应的累计正文上限为 32 MiB，超过上限或缺少上游完成标记时报错，不返回伪造成功。
+
+模型来自随版本发布的官方目录快照，区分 Zen / Go 和原生协议；不动态拉取新模型，也不代表某个 workspace 的余额或授权。
+管理端“刷新模型”仍返回此快照；同名模型对外公布两个产品共有的能力及较小的上下文、输出上限。
+OpenCode 没有已接入的上游额度查询，页面保留未知额度及本地用量；不提供费用估算、
+OAuth 刷新、个人资料、订阅或重置卡。新模型、协议变更与 workspace 权限需通过连接测试核实。
+
+身份头沿用 OpenCode v1.18.31 的命名与关联语义：`User-Agent: opencode/1.18.31`、`x-opencode-client: cli`、
+`x-opencode-project`、`x-opencode-session`、`x-opencode-request`，子会话另带 `x-parent-session-id`。
+项目、会话和父会话按下游 Client Key 隔离映射；调用方可传同名请求头或 `metadata` 字段。
+会话也接受 `session_id` 或 `prompt_cache_key`，未提供时按独立请求处理；请求关联优先使用 `x-opencode-request`，
+其次为最后一条用户消息 ID，缺失时使用网关请求 ID 的稳定映射，Core 重试保持一致。
+这些是协议兼容身份，不代表真实客户端安装或设备指纹。
+
+Key 使用账号绑定的代理。遇到 401/402/403/429 或服务端错误时写入共享冷却；优先遵循 `Retry-After`，
+无此字段时 429 默认 120 秒，其余默认 60 秒。全部可选 Key 冷却时返回无可用账号错误并提供等待时间，
+不会继续选择冷却中的 Key。跨账号重试由 Core 按重放安全和请求预算决定；已经交付内容的请求不透明重发。
 
 ### OpenAI 身份、额度与状态
 

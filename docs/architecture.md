@@ -11,7 +11,7 @@ Codex Proxy RS 是单进程、单副本运行的多 Provider AI 网关，同时�
 - 面向客户端的 OpenAI Responses、Images、standalone Search 和模型目录协议；
 - 面向管理员的 `/api/admin/*` 控制面和 Vue 管理端；
 - 面向 Key 持有者的 `/api/key-usage/*` 只读用量接口和独立 `/key-usage` 页面；
-- OpenAI 与 xAI 两个编译期 Provider；
+- OpenAI、xAI 与 OpenCode 三个编译期 Provider；
 - PostgreSQL 持久化、Redis 协调状态以及 S3/R2 数据库备份。
 
 系统不提供 `/v1/chat/completions`，不存在 Provider Instance 层，也不支持通过复制应用容器进行多副本
@@ -32,13 +32,16 @@ flowchart LR
   Admin --> Registry
   Registry --> OpenAI[provider-openai]
   Registry --> XAI[provider-xai]
+  Registry --> OpenCode[provider-opencode]
   OpenAI --> OpenAIUpstream[OpenAI upstream]
   XAI --> XAIUpstream[xAI upstream]
+  OpenCode --> OpenCodeUpstream[OpenCode Zen / Go]
 
   Core --> Store[gateway-store]
   Admin --> Store
   OpenAI --> Store
   XAI --> Store
+  OpenCode --> Store
   Store --> PG[(PostgreSQL)]
   Store --> Redis[(Redis)]
   Store --> Object[(S3 / R2)]
@@ -64,6 +67,7 @@ flowchart LR
 | `gateway-host` | 配置加载、日志、HTTP 生命周期、Worker 监督、系统更新及外部价格源适配 |
 | `providers/openai` | OpenAI OAuth、账号选择、目录、额度、Responses/Images/Search transport |
 | `providers/xai` | xAI OAuth session、账号选择、目录、额度和 Grok/Responses 转换 |
+| `providers/opencode` | Zen / Go Key、身份关联、按产品的模型协议目录和 Responses/Chat/Messages 转换 |
 | `frontend` | Vue 管理端与 Key 用量页，仅通过各自身份允许的控制面 API 访问状态 |
 
 依赖方向遵守四条规则：
@@ -208,6 +212,11 @@ OpenAI 的 OAuth 与 API Key 共用现有账号和事务。API Key 的 Base URL�
 上游用户 ID 推断可用性；OAuth 未完成身份投影时由 Provider 保持 `unknown`。状态恢复和未补齐身份的凭据轮换保留 `unknown`。
 API Key 默认 HTTP/SSE，可选 WS 优先；选号先验证传输资格，WS pool 与 continuation 按凭据版本隔离。
 OAuth 与 API Key 共用业务请求、响应和能力透传链路，差异限定在上游地址、认证与传输配置。
+
+OpenCode Provider 使用独立的 Zen / Go 凭据合同，通过中立凭据用例复用凭据存储、导入和轮换事务。
+它按产品和官方目录快照选择上游协议，将 Responses 输入转换为该模型的原生请求；转换不进入 API 或其它 Provider。
+账号选择复用 Core 权重、作用域与排队，出站请求持有账号租约并使用其绑定代理；上游错误产生的冷却经 Store 端口协调。
+全部账号冷却时返回带等待时间的无可用账号错误，不以冷却账号兜底。项目和会话身份按客户端密钥隔离，成功切换账号后以 CAS 更新会话亲和。
 OpenAI 模型目录用于发现，不因目录缺项拒绝请求；管理员配置的模型权限仍由 Core 与选号链路执行。
 
 - OpenAI 是透明边界。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
