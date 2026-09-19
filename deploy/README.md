@@ -378,9 +378,13 @@ docker compose -f deploy/compose.yaml up -d --no-build --wait codex-proxy-rs
 源码构建需要克隆源码仓库并准备配置与数据目录，以下命令从仓库根目录执行：
 
 ```bash
+export CPR_IMAGE=codex-proxy-rs:opencode-local
 docker compose -f deploy/compose.yaml build codex-proxy-rs
 docker compose -f deploy/compose.yaml up -d --no-build --wait
 ```
+
+OpenCode 版本使用 `https://github.com/woaijing/codex-proxy-rs.git` 的源码。后续 Compose 操作保持相同的
+`CPR_IMAGE`；本地源码镜像通过重新构建升级，管理端在线更新使用的上游发布版不包含新增 OpenCode 功能。
 
 升级后通过管理端版本接口或容器 image digest 确认运行实例的版本和 revision。
 

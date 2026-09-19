@@ -19,6 +19,11 @@
 > [!NOTE]
 > 本项目提供 Responses API，不支持 `/v1/chat/completions`。接入前请确认客户端支持 Responses 协议。
 
+> [!IMPORTANT]
+> 此仓库基于 [zyycn/codex-proxy-rs](https://github.com/zyycn/codex-proxy-rs) 增加 OpenCode Zen / Go API Key 支持。
+> 部署 OpenCode 版本请克隆 `https://github.com/woaijing/codex-proxy-rs.git`，按[源码构建](deploy/README.md#镜像升级与源码构建)部署。
+> 下方一键安装、Release 和镜像链接指向上游发布版；它们不包含本仓库新增功能。
+
 ## 快速预览
 
 无需部署，打开 [快速预览服务](https://codex-proxy-rs.ainz.cc) 即可体验管理端的系统概览、账号分组、代理管理与用量统计。
