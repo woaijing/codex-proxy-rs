@@ -537,7 +537,6 @@ impl ProviderCandidate {
 #[derive(Debug, Clone)]
 pub struct RoutingPlan {
     pricing: Arc<crate::metering::PricingOverrides>,
-    disable_fast: bool,
     request_location: Option<crate::account::RequestLocation>,
     config_revision: ConfigRevision,
     account_selection_policy: AccountSelectionPolicy,
@@ -554,8 +553,8 @@ impl RoutingPlan {
     }
 
     #[must_use]
-    pub const fn disable_fast(&self) -> bool {
-        self.disable_fast
+    pub fn disable_fast(&self) -> bool {
+        self.account_scope.disable_fast()
     }
 
     /// 本次请求冻结的全局位置，重试时沿用同一份配置。

@@ -71,7 +71,7 @@ const providerOptions = [
             </template>
             <div :id="syncInfoId" class="grid w-64 gap-2 p-3 text-cp-xs leading-relaxed text-cp-text-secondary">
               <p class="m-0">
-                从 models.dev 获取社区价目，保留人工单价与倍率。
+                从 models.dev 获取社区价目，保留人工单价与倍率
               </p>
               <p class="m-0 text-cp-text-tertiary">
                 最近同步：{{ syncTime }}

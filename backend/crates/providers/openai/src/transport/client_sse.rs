@@ -70,6 +70,7 @@ impl CodexBackendClient {
             outbound_proxy: None,
             egress_key: String::new(),
             base_url,
+            official_base_url: crate::OFFICIAL_CODEX_BASE_URL.to_owned(),
             protocol: OpenAiUpstreamProtocol::Codex,
             profile,
             websocket_pool: None,

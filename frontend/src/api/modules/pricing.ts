@@ -28,10 +28,16 @@ export type PricingChange
   = | { action: 'replace', pricing: ModelPricing }
     | { action: 'multiplier', multiplierBps: number }
     | { action: 'reset' }
+    | { action: 'delete' }
 
 export interface PricingSyncPreview {
   prices: PricingMap
   skipped: string[]
+}
+
+export interface PricingSyncRequest {
+  preview: PricingSyncPreview
+  models: Record<string, string[]>
 }
 
 interface UpdatePricingParam {
@@ -68,7 +74,7 @@ export function previewPricingSync() {
   })
 }
 
-export function syncPricing(data: PricingSyncPreview) {
+export function syncPricing(data: PricingSyncRequest) {
   return request<PricingMutationResponse>({
     url: '/api/admin/settings/pricing/sync',
     method: 'POST',

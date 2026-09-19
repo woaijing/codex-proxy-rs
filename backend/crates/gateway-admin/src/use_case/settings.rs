@@ -29,7 +29,7 @@ pub trait SettingsService: Send + Sync {
     async fn sync_pricing(
         &self,
         context: &MutationContext,
-        preview: crate::model::pricing::PricingSyncPreview,
+        command: crate::model::pricing::SyncPricing,
     ) -> Result<(), AdminError>;
     async fn pricing(&self) -> Result<crate::model::pricing::PricingCatalog, AdminError>;
     async fn update_pricing(
@@ -103,17 +103,55 @@ impl SettingsService for DefaultSettingsService {
     async fn sync_pricing(
         &self,
         context: &MutationContext,
-        preview: crate::model::pricing::PricingSyncPreview,
+        command: crate::model::pricing::SyncPricing,
     ) -> Result<(), AdminError> {
-        let current = self.pricing_source.fetch().await?;
-        if current != preview {
+        let count = command
+            .models
+            .values()
+            .map(std::collections::BTreeSet::len)
+            .sum::<usize>();
+        if count == 0
+            || count > 10_000
+            || command
+                .models
+                .values()
+                .any(std::collections::BTreeSet::is_empty)
+        {
+            return Err(AdminError::invalid("请选择 1 至 10000 个模型"));
+        }
+        let mut current = self.pricing_source.fetch().await?;
+        if current != command.preview {
             return Err(AdminError::invalid(
                 "models.dev 价目已变化，请重新预览后确认",
             ));
         }
+        let stored = self
+            .store
+            .load_pricing()
+            .await
+            .map_err(|error| map_store_error(error, "model pricing"))?;
+        let mut changes = crate::model::pricing::PricingSyncChanges::new();
+        for (provider, models) in command.models {
+            let selected = changes.entry(provider.clone()).or_default();
+            for model in models {
+                let price = current
+                    .prices
+                    .get_mut(&provider)
+                    .and_then(|prices| prices.remove(&model));
+                if price.is_none()
+                    && !stored
+                        .synced
+                        .get(&provider)
+                        .is_some_and(|prices| prices.contains_key(&model))
+                {
+                    return Err(AdminError::invalid("所选模型不在来源价目中，请重新预览"));
+                }
+                selected.insert(model, price);
+            }
+        }
         let revision = self
             .store
-            .sync_pricing(current.prices, context)
+            .sync_pricing(changes, context)
             .await
             .map_err(|error| map_store_error(error, "model pricing sync"))?;
         publish_committed(self.snapshot.as_ref(), revision).await
@@ -152,6 +190,16 @@ impl SettingsService for DefaultSettingsService {
             })
         {
             return Err(AdminError::invalid("Provider、模型 ID 或批量数量不合法"));
+        }
+        if command.change == PricingChange::Delete
+            && command.models.iter().any(|model| {
+                catalog
+                    .defaults
+                    .get(&command.provider)
+                    .is_some_and(|models| models.contains_key(model))
+            })
+        {
+            return Err(AdminError::invalid("内置价目不能删除，仅支持人工覆盖"));
         }
         let defaults = gateway_core::metering::merge_pricing(catalog.defaults, &catalog.synced);
         let defaults = defaults.get(&command.provider);

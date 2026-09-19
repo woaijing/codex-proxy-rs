@@ -102,10 +102,17 @@ function closeModal() {
   open.value = false
 }
 
-function focusableElements() {
-  return Array.from(panel.value?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(
-    element => !element.hidden,
-  )
+function focusableElements(root: ParentNode | null = panel.value): HTMLElement[] {
+  if (!root)
+    return []
+
+  const elements: HTMLElement[] = []
+  for (const element of root.children) {
+    if (element instanceof HTMLElement && element.matches(focusableSelector) && !element.hidden)
+      elements.push(element)
+    elements.push(...focusableElements(element.shadowRoot ?? element))
+  }
+  return elements
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -125,17 +132,20 @@ function handleKeydown(event: KeyboardEvent) {
   }
   const first = focusable[0]
   const last = focusable[focusable.length - 1]
+  let activeElement = document.activeElement
+  while (activeElement?.shadowRoot?.activeElement)
+    activeElement = activeElement.shadowRoot.activeElement
   if (!panel.value?.contains(document.activeElement)) {
     event.preventDefault()
     if (event.shiftKey)
       last?.focus()
     else first?.focus()
   }
-  else if (event.shiftKey && document.activeElement === first) {
+  else if (event.shiftKey && activeElement === first) {
     event.preventDefault()
     last?.focus()
   }
-  else if (!event.shiftKey && document.activeElement === last) {
+  else if (!event.shiftKey && activeElement === last) {
     event.preventDefault()
     first?.focus()
   }

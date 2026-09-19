@@ -4,6 +4,7 @@ import type { ModelPricing, PricingChange } from '@/api'
 import { CircleAlert } from '@lucide/vue'
 import { computed, ref, shallowRef } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseConfirmModal from '@/components/base/BaseConfirmModal.vue'
 import BaseEmpty from '@/components/base/BaseEmpty.vue'
 import BaseTablePagination from '@/components/base/BaseTable/BaseTablePagination.vue'
 import PricingBatchModal from './PricingBatchModal.vue'
@@ -16,6 +17,7 @@ import { usePricing } from './usePricing'
 const { catalog, provider, search, source, page, pageSize, selected, error, rows, visible, pagination, loading, saving, syncing, preview, load, save, startSync, confirmSync, toggle, togglePage } = usePricing()
 const editorOpen = ref(false)
 const editing = shallowRef<PricingRow>()
+const deleting = shallowRef<PricingRow>()
 const batchOpen = ref(false)
 const batchReset = ref(false)
 const targets = shallowRef<PricingRow[]>([])
@@ -38,6 +40,10 @@ async function saveBatch(change: PricingChange) {
   if (await save(targets.value.map(row => row.model), change))
     batchOpen.value = false
 }
+async function deleteModel() {
+  if (deleting.value?.canDelete && await save([deleting.value.model], { action: 'delete' }))
+    deleting.value = undefined
+}
 </script>
 
 <template>
@@ -57,7 +63,7 @@ async function saveBatch(change: PricingChange) {
       @reset="batch(true)"
       @clear="selected = []"
     />
-    <PricingTable class="min-h-0 flex-1" :rows="error ? [] : visible" :selected="selected" :loading="loading" :disabled="disabled" @toggle="toggle" @toggle-page="togglePage" @edit="edit">
+    <PricingTable class="min-h-0 flex-1" :rows="error ? [] : visible" :selected="selected" :loading="loading" :disabled="disabled" @toggle="toggle" @toggle-page="togglePage" @edit="edit" @delete="deleting = $event">
       <template v-if="error" #empty>
         <BaseEmpty title="价目加载失败" :description="error" :icon="CircleAlert" surface="none" class="w-full max-w-80" role="alert">
           <template #action>
@@ -70,6 +76,9 @@ async function saveBatch(change: PricingChange) {
     </PricingTable>
     <BaseTablePagination :pagination="pagination" :loading="loading" @page-change="page = $event" @page-size-change="pageSize = $event" />
     <PricingEditor v-model="editorOpen" :row="editing" :provider="provider" :saving="saving" @save="saveModel" />
+    <BaseConfirmModal :model-value="!!deleting" title="删除模型价目" description="删除该模型的同步与自定义价格，历史账单不变" destructive confirm-text="删除" :loading="saving" @update:model-value="!$event && (deleting = undefined)" @confirm="deleteModel">
+      <span class="break-all font-mono text-cp-sm font-normal">{{ deleting?.model }}</span>
+    </BaseConfirmModal>
     <PricingBatchModal v-model="batchOpen" :rows="targets" :reset="batchReset" :saving="saving" @confirm="saveBatch" />
     <PricingSyncModal :preview="preview" :catalog="catalog" :saving="saving" @close="preview = undefined" @confirm="confirmSync" />
   </section>

@@ -7,10 +7,12 @@ import BaseFormItem from '@/components/base/BaseForm/FormItem.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseSegmented from '@/components/base/BaseSegmented.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
+import BaseSkeleton from '@/components/base/BaseSkeleton.vue'
 import { errorMessage } from '@/utils/async'
 import { formatDateTime } from '@/utils/date'
 
-withDefaults(defineProps<{ disabled?: boolean, allowInherit?: boolean }>(), {
+const props = withDefaults(defineProps<{ active?: boolean, disabled?: boolean, allowInherit?: boolean }>(), {
+  active: true,
   disabled: false,
   allowInherit: false,
 })
@@ -22,7 +24,6 @@ const loading = shallowRef(true)
 const loadError = shallowRef('')
 const previewError = shallowRef('')
 const previewing = shallowRef(false)
-const custom = shallowRef(false)
 const platforms = { macos: 'MacOS', linux: 'Linux', windows: 'Windows' }
 const presetOptions = computed(() => presets.value.map(({ configuration }) => ({
   value: `${configuration.platform}-${configuration.client}`,
@@ -46,10 +47,8 @@ const selectedPreset = computed({
   get: () => model.value ? `${model.value.platform}-${model.value.client}` : '',
   set: (value: string) => {
     const preset = presets.value.find(({ configuration }) => `${configuration.platform}-${configuration.client}` === value)
-    if (preset) {
+    if (preset)
       model.value = { ...preset.configuration, versionMode: preset.automaticAvailable ? 'latest' : 'fixed' }
-      custom.value = false
-    }
   },
 })
 const versionMode = computed({
@@ -95,12 +94,12 @@ async function load() {
   }
 }
 
-watch(model, (configuration, _, onCleanup) => {
+watch([model, () => props.active], ([configuration, active], _, onCleanup) => {
   let cancelled = false
   preview.value = undefined
   previewError.value = ''
-  previewing.value = !needsVersionInput.value
-  if (needsVersionInput.value)
+  previewing.value = active && !needsVersionInput.value
+  if (!active || needsVersionInput.value)
     return
   const timer = setTimeout(async () => {
     try {
@@ -141,10 +140,10 @@ onMounted(load)
       <BaseSegmented
         v-if="allowInherit"
         v-model="profileSource"
-        label="上游身份来源"
+        label="客户端身份来源"
         class="justify-self-start"
         :options="[
-          { label: '通用设置', value: 'global' },
+          { label: '全局配置', value: 'global' },
           { label: '独立配置', value: 'independent' },
         ]"
         :disabled="disabled"
@@ -154,13 +153,13 @@ onMounted(load)
           <BaseFormItem label="客户端预设">
             <BaseSelect v-model="selectedPreset" class="w-full" :options="presetOptions" :disabled="disabled" />
           </BaseFormItem>
-          <BaseFormItem label="版本模式">
+          <BaseFormItem label="版本策略">
             <BaseSelect
               v-model="versionMode"
               class="w-full"
               :options="[
-                { label: '自动最新', value: 'latest', disabled: !currentPreset?.automaticAvailable },
-                { label: '固定版本', value: 'fixed' },
+                { label: '跟随最新版本', value: 'latest', disabled: !currentPreset?.automaticAvailable },
+                { label: '自定义版本', value: 'fixed' },
               ]"
               :disabled="disabled"
             />
@@ -170,7 +169,7 @@ onMounted(load)
           {{ currentPreset.reason }}
         </p>
         <div v-if="model.versionMode === 'fixed'" class="grid gap-4 sm:grid-cols-2">
-          <BaseFormItem label="Core 版本" required>
+          <BaseFormItem label="Codex Core 版本" required>
             <BaseInput :model-value="model.codexVersion ?? ''" :disabled="disabled" placeholder="例如 0.155.0" @update:model-value="updateField('codexVersion', $event)" />
           </BaseFormItem>
           <template v-if="model.client === 'desktop'">
@@ -181,38 +180,36 @@ onMounted(load)
               <BaseInput :model-value="model.desktopBuild ?? ''" :disabled="disabled" placeholder="填写该制品的构建号" @update:model-value="updateField('desktopBuild', $event)" />
             </BaseFormItem>
           </template>
+          <BaseFormItem v-for="field in customFields" :key="field.key" :label="field.label">
+            <BaseInput
+              :model-value="model[field.key] ?? ''"
+              :placeholder="currentPreset?.defaults[field.key] ?? ''"
+              :disabled="disabled"
+              @update:model-value="updateField(field.key, $event)"
+            />
+          </BaseFormItem>
         </div>
-        <details :open="custom" @toggle="custom = ($event.target as HTMLDetailsElement).open">
-          <summary class="cursor-pointer text-cp-sm text-cp-text-secondary">
-            自定义身份参数
-          </summary>
-          <div class="mt-4 grid gap-4 sm:grid-cols-2">
-            <BaseFormItem v-for="field in customFields" :key="field.key" :label="field.label">
-              <BaseInput
-                :model-value="model[field.key] ?? ''"
-                :placeholder="currentPreset?.defaults[field.key] ?? ''"
-                :disabled="disabled"
-                @update:model-value="updateField(field.key, $event)"
-              />
-            </BaseFormItem>
-          </div>
-        </details>
       </template>
     </template>
-    <div class="grid min-w-0 gap-2 rounded-cp bg-cp-fill-quaternary p-4" aria-live="polite">
+    <div class="grid min-h-20 min-w-0 content-start gap-2 rounded-cp bg-cp-fill-quaternary p-4" aria-live="polite" :aria-busy="previewing">
       <p v-if="needsVersionInput" class="m-0 text-cp-sm text-cp-text-tertiary">
         填写版本后预览
       </p>
-      <p v-else-if="previewing" class="m-0 text-cp-sm text-cp-text-tertiary">
-        正在解析身份…
-      </p>
+      <div v-else-if="previewing" class="grid gap-2" role="status" aria-label="正在解析客户端身份">
+        <div class="flex h-lh items-center text-cp-sm" aria-hidden="true">
+          <BaseSkeleton shape="text" class="w-4/5" />
+        </div>
+        <div class="flex h-lh items-center text-cp-xs" aria-hidden="true">
+          <BaseSkeleton shape="text" class="w-52 max-w-full" />
+        </div>
+      </div>
       <p v-else-if="previewError" role="alert" class="m-0 text-cp-sm text-cp-error">
         {{ previewError }}
       </p>
       <template v-else-if="preview">
         <code class="break-all text-cp-sm text-cp-text">{{ preview.userAgent }}</code>
         <p class="m-0 text-cp-xs text-cp-text-tertiary">
-          {{ preview.versionSource === 'custom' ? '固定版本' : '自动更新' }}
+          {{ preview.versionSource === 'custom' ? '自定义版本' : '自动更新' }}
           <template v-if="preview.versionSource === 'official'">
             · {{ preview.checkedAt ? `检查于 ${formatDateTime(preview.checkedAt)}` : '待检查' }}
           </template>

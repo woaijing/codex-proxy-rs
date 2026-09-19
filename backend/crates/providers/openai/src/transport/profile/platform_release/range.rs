@@ -60,10 +60,9 @@ impl RemoteFile {
 impl Read for RemoteFile {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         if self.cancel.is_cancelled() || Instant::now() >= self.deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "Desktop 制品读取已取消或超时",
-            ));
+            // 取消和预算耗尽是终态；Interrupted 会被 read_exact/read_to_end
+            // 自动重试，导致 blocking 线程空转并阻止 Tokio runtime 退出。
+            return Err(io::Error::other("Desktop 制品读取已取消或超时"));
         }
         if output.is_empty() || self.position >= self.identity.size {
             return Ok(0);
@@ -81,7 +80,7 @@ impl Read for RemoteFile {
             }
             let (_, bytes) = self.runtime.block_on(async {
                 tokio::select! {
-                    () = self.cancel.cancelled() => Err(io::Error::new(io::ErrorKind::Interrupted, "Desktop 制品读取已取消")),
+                    () = self.cancel.cancelled() => Err(io::Error::other("Desktop 制品读取已取消")),
                     result = request(&self.client, &self.url, self.position, end, Some(&self.identity)) => result,
                 }
             })?;

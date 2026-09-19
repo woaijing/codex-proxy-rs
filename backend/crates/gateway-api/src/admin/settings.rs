@@ -35,7 +35,6 @@ pub type ModelMappings = BTreeMap<String, String>;
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSettingsView {
     pub openai_client_profile: Option<serde_json::Map<String, serde_json::Value>>,
-    pub disable_fast: bool,
     pub request_location_enabled: bool,
     pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
@@ -69,7 +68,6 @@ pub struct RuntimeSettingsView {
 pub struct UpdateRuntimeSettingsRequest {
     #[serde(default, deserialize_with = "deserialize_profile_update")]
     pub openai_client_profile: Option<serde_json::Map<String, serde_json::Value>>,
-    pub disable_fast: Option<bool>,
     pub request_location_enabled: bool,
     pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
@@ -183,7 +181,6 @@ impl UpdateRuntimeSettingsRequest {
             openai_client_profile: self
                 .openai_client_profile
                 .map(gateway_core::account::OpaqueProviderData::new),
-            disable_fast: self.disable_fast,
             request_location_enabled: self.request_location_enabled,
             request_location: self
                 .request_location
@@ -228,7 +225,6 @@ impl From<RuntimeSettings> for RuntimeSettingsView {
             openai_client_profile: settings
                 .openai_client_profile
                 .map(gateway_core::account::OpaqueProviderData::into_inner),
-            disable_fast: settings.disable_fast,
             request_location_enabled: settings.request_location_enabled,
             request_location: settings.request_location,
             model_mappings: wire_model_mappings(settings.model_mappings),
@@ -429,6 +425,7 @@ enum PricingChangeRequest {
         multiplier_bps: u32,
     },
     Reset {},
+    Delete {},
 }
 
 async fn pricing<S>(
@@ -475,7 +472,7 @@ where
 async fn sync_pricing<S>(
     auth: AdminAuth,
     State(state): State<S>,
-    AdminJson(preview): AdminJson<gateway_admin::model::pricing::PricingSyncPreview>,
+    AdminJson(command): AdminJson<gateway_admin::model::pricing::SyncPricing>,
 ) -> Result<impl IntoResponse, AdminError>
 where
     S: SessionState + Send + Sync,
@@ -483,7 +480,7 @@ where
     state
         .admin_services()
         .settings()
-        .sync_pricing(&auth.context().mutation_context(), preview)
+        .sync_pricing(&auth.context().mutation_context(), command)
         .await
         .map_err(map_service_error)?;
     Ok(AdminResponse::new(
@@ -507,6 +504,7 @@ where
             PricingChange::Multiplier(multiplier_bps)
         }
         PricingChangeRequest::Reset {} => PricingChange::Reset,
+        PricingChangeRequest::Delete {} => PricingChange::Delete,
     };
     state
         .admin_services()

@@ -478,6 +478,7 @@ async fn usage_not_found_should_preserve_status_without_a_nonofficial_fallback()
         .await;
 
     let error = client(&server.uri())
+        .with_official_base_url(server.uri())
         .fetch_usage(context())
         .await
         .expect_err("usage 404");
@@ -618,6 +619,67 @@ async fn chunked_body_over_limit_should_be_rejected_without_content_length() {
     server.join().expect("chunked server thread");
 
     assert_oversized_error(error, StatusCode::BAD_GATEWAY, None);
+}
+
+#[tokio::test]
+async fn fetch_usage_should_fallback_to_official_endpoint_when_custom_upstream_returns_404() {
+    let custom_server = MockServer::start().await;
+    let official_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/codex/usage"))
+        .respond_with(ResponseTemplate::new(StatusCode::NOT_FOUND))
+        .expect(1)
+        .mount(&custom_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/usage"))
+        .respond_with(
+            ResponseTemplate::new(StatusCode::OK)
+                .set_body_json(serde_json::json!({"rate_limit": {"limit": 100}})),
+        )
+        .expect(1)
+        .mount(&official_server)
+        .await;
+
+    let test_client = client(&custom_server.uri())
+        .with_official_base_url(format!("{}/backend-api", official_server.uri()));
+    let usage = test_client
+        .fetch_usage(context())
+        .await
+        .expect("usage after fallback");
+    assert_eq!(usage["rate_limit"]["limit"], 100);
+}
+
+#[tokio::test]
+async fn fetch_usage_should_not_fallback_when_error_is_not_404() {
+    let custom_server = MockServer::start().await;
+    let official_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/codex/usage"))
+        .respond_with(ResponseTemplate::new(StatusCode::UNAUTHORIZED))
+        .expect(1)
+        .mount(&custom_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/codex/usage"))
+        .respond_with(ResponseTemplate::new(StatusCode::OK))
+        .expect(0)
+        .mount(&official_server)
+        .await;
+
+    let test_client = client(&custom_server.uri()).with_official_base_url(official_server.uri());
+    let error = test_client
+        .fetch_usage(context())
+        .await
+        .expect_err("should return 401");
+    let CodexClientError::Upstream { status, .. } = error else {
+        panic!("expected upstream error");
+    };
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 fn assert_oversized_error(

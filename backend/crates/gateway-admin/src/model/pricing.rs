@@ -1,7 +1,7 @@
 //! 全局模型定价的管理合同。
 
 use gateway_core::metering::{ModelPriceOverride, PricingOverrides};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PricingCatalog {
@@ -25,11 +25,21 @@ pub struct PricingSyncPreview {
     pub skipped: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SyncPricing {
+    pub preview: PricingSyncPreview,
+    pub models: BTreeMap<String, BTreeSet<String>>,
+}
+
+pub type PricingSyncChanges = BTreeMap<String, BTreeMap<String, Option<ModelPriceOverride>>>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PricingChange {
     Replace(ModelPriceOverride),
     Multiplier(u32),
     Reset,
+    Delete,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

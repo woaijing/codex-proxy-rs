@@ -1,6 +1,6 @@
 //! 价格覆盖与请求费用明细的持久化。
 
-use gateway_admin::model::pricing::{PricingChange, UpdatePricing};
+use gateway_admin::model::pricing::{PricingChange, PricingSyncChanges, UpdatePricing};
 use gateway_core::metering::{ModelPriceOverride, PricingOverrides};
 use sqlx::types::Json;
 
@@ -146,16 +146,32 @@ impl PgControlPlaneRepository {
 
     pub(crate) async fn sync_pricing(
         &self,
-        prices: PricingOverrides,
+        changes: PricingSyncChanges,
         audit: AdminAuditEvent,
     ) -> StoreResult<Revision> {
-        validate_pricing(&prices)?;
         let mut transaction = self
             .pool
             .begin()
             .await
             .map_err(|_| postgres_unavailable("begin pricing sync"))?;
-        // 同步只替换来源层；不写人工覆盖。运行设置行锁统一串行化配置修订。
+        let Json(mut prices) = sqlx::query_scalar::<_, Json<PricingOverrides>>(
+            "select pricing_synced_json from runtime_settings where id = 1 for update",
+        )
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| postgres_unavailable("lock synced model pricing"))?;
+        for (provider, models) in changes {
+            let stored = prices.entry(provider).or_default();
+            for (model, price) in models {
+                if let Some(price) = price {
+                    stored.insert(model, price);
+                } else {
+                    stored.remove(&model);
+                }
+            }
+        }
+        prices.retain(|_, models| !models.is_empty());
+        validate_pricing(&prices)?;
         sqlx::query("update runtime_settings set pricing_synced_json = $1, pricing_synced_at = now() where id = 1")
             .bind(Json(prices)).execute(&mut *transaction).await.map_err(|_| postgres_unavailable("sync model pricing"))?;
         let revision = bump_config_revision_in_transaction(&mut transaction).await?;
@@ -178,17 +194,22 @@ impl PgControlPlaneRepository {
             .await
             .map_err(|_| postgres_unavailable("begin model pricing update"))?;
         // 锁定当前配置再更新选中项，避免批量操作覆盖其他管理员已提交的模型。
-        let Json(mut pricing) = sqlx::query_scalar::<_, Json<PricingOverrides>>(
-            "select pricing_overrides_json from runtime_settings where id = 1 for update",
+        let (Json(mut pricing), Json(mut synced)) = sqlx::query_as::<_, (Json<PricingOverrides>, Json<PricingOverrides>)>(
+            "select pricing_overrides_json, pricing_synced_json from runtime_settings where id = 1 for update",
         )
         .fetch_one(&mut *transaction)
         .await
         .map_err(|_| postgres_unavailable("lock model pricing"))?;
-        let models = pricing.entry(command.provider).or_default();
+        let models = pricing.entry(command.provider.clone()).or_default();
+        let source = synced.entry(command.provider).or_default();
         for model in command.models {
             match &command.change {
                 PricingChange::Reset => {
                     models.remove(&model);
+                }
+                PricingChange::Delete => {
+                    models.remove(&model);
+                    source.remove(&model);
                 }
                 PricingChange::Replace(value) => {
                     models.insert(model, value.clone());
@@ -205,9 +226,11 @@ impl PgControlPlaneRepository {
             }
         }
         pricing.retain(|_, models| !models.is_empty());
+        synced.retain(|_, models| !models.is_empty());
         validate_pricing(&pricing)?;
-        sqlx::query("update runtime_settings set pricing_overrides_json = $1 where id = 1")
+        sqlx::query("update runtime_settings set pricing_overrides_json = $1, pricing_synced_json = $2 where id = 1")
             .bind(Json(pricing))
+            .bind(Json(synced))
             .execute(&mut *transaction)
             .await
             .map_err(|_| postgres_unavailable("update model pricing"))?;

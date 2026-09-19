@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import type { PricingRow } from './model'
 import type { BaseTableColumn } from '@/components/base/BaseTable/columns'
+import { Pencil, Trash2 } from '@lucide/vue'
 import BaseCheckbox from '@/components/base/BaseCheckbox.vue'
+import BaseIconButton from '@/components/base/BaseIconButton.vue'
 import BaseTable from '@/components/base/BaseTable/index.vue'
 import { effectivePrice, multiplierText, sourceLabels } from './model'
 import PricingUnit from './PricingUnit.vue'
 
 defineProps<{ rows: PricingRow[], selected: string[], loading: boolean, disabled: boolean }>()
-defineEmits<{ toggle: [model: string, checked: boolean], togglePage: [checked: boolean], edit: [row: PricingRow] }>()
+defineEmits<{ toggle: [model: string, checked: boolean], togglePage: [checked: boolean], edit: [row: PricingRow], delete: [row: PricingRow] }>()
 const columns: BaseTableColumn<PricingRow>[] = [
   { key: 'select', kind: 'selection' },
   { key: 'model', label: '模型', kind: 'identity' },
@@ -15,7 +17,7 @@ const columns: BaseTableColumn<PricingRow>[] = [
   { key: 'output', label: '输出', kind: 'numeric' },
   { key: 'cacheRead', label: '缓存读取', kind: 'numeric' },
   { key: 'multiplier', label: '倍率', kind: 'numeric', align: 'center' },
-  { key: 'actions', label: '操作', kind: 'actions', align: 'center' },
+  { key: 'actions', label: '操作', kind: 'actions' },
 ]
 
 function summaryBand(row: PricingRow) {
@@ -68,14 +70,14 @@ function summaryBand(row: PricingRow) {
       <span class="font-mono tabular-nums">{{ multiplierText(row.effective.multiplierBps) }}</span>
     </template>
     <template #actions="{ row }">
-      <button
-        type="button"
-        class="inline-flex h-cp-control shrink-0 cursor-pointer touch-manipulation items-center justify-center rounded-cp-sm border-0 bg-transparent p-0 text-cp leading-none font-bold text-cp-text-secondary outline-none transition-colors enabled:hover:text-cp-primary-text focus-visible:ring-2 focus-visible:ring-cp-control-outline disabled:cursor-not-allowed disabled:text-cp-text-disabled motion-reduce:transition-none"
-        :disabled="disabled"
-        @click="$emit('edit', row)"
-      >
-        编辑
-      </button>
+      <div class="flex items-center gap-1">
+        <BaseIconButton size="sm" label="编辑价格" :disabled="disabled" @click="$emit('edit', row)">
+          <Pencil class="size-3.5 text-cp-link" aria-hidden="true" />
+        </BaseIconButton>
+        <BaseIconButton v-if="row.canDelete" size="sm" label="删除价目" :disabled="disabled" @click="$emit('delete', row)">
+          <Trash2 class="size-3.5 text-cp-error" aria-hidden="true" />
+        </BaseIconButton>
+      </div>
     </template>
   </BaseTable>
 </template>

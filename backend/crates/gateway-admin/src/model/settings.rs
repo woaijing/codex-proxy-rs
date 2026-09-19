@@ -18,7 +18,6 @@ pub use gateway_core::account::RotationStrategy;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSettings {
     pub openai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
-    pub disable_fast: bool,
     pub config_revision: Revision,
     pub request_location_enabled: bool,
     pub request_location: gateway_core::account::RequestLocation,
@@ -51,7 +50,6 @@ pub struct RuntimeSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceRuntimeSettings {
     pub openai_client_profile: Option<gateway_core::account::OpaqueProviderData>,
-    pub disable_fast: Option<bool>,
     pub request_location_enabled: bool,
     pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,

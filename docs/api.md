@@ -267,7 +267,8 @@ OpenAI 明确返回 `server_is_overloaded`、`slow_down` 或模型容量不足�
 尚未交付输出的前提下，先做最多 3 次同账号指数退避，再通过现有调度换号。默认间隔从 500ms 开始，
 上游 `Retry-After` 参与退避计算，单次等待不超过 8 秒；重试同时受请求总尝试次数和截止时间约束。
 `server_is_overloaded`、`slow_down` 等可计分的结构化错误按已发送的失败尝试计入 Smart 账号
-健康分。失败率使用账号级平滑与时间衰减，影响后续普通选路，已有可用账号的
+健康分。已确认容量拒绝的平滑权重为 0.4，其他可计分失败与成功样本保持 0.2。
+失败率使用账号级平滑与时间衰减，影响后续普通选路，已有可用账号的
 会话亲和仍优先。容量不足不触发 Provider 全局熔断，也不作为账号额度耗尽；启用账号自动冻结时，
 达到容量失败阈值会另外写入临时冷却。
 客户端错误兼容由 API 编码出口统一处理：最终交付的 `server_is_overloaded`、`slow_down` 错误码
@@ -301,10 +302,16 @@ SSE/WS 的 `response.failed` 保留原消息、响应 ID 与其他业务字段�
 | `POST` | `/api/auth/login` | `{ mode: "admin", username?, password }` 或 `{ mode: "key", apiKey }` | 验证凭据、创建会话；成功后撤销请求携带的旧会话 |
 | `GET` | `/api/auth/status` | 无 | 从 Cookie 恢复服务端身份，返回 `{ authenticated, session }` |
 | `POST` | `/api/auth/logout` | 无 | 删除当前会话并清除 Cookie；存储失败返回 503，不假装退出成功 |
+| `POST` | `/api/auth/password` | `{ currentPassword, newPassword }` | 仅管理员会话可用；验证当前密码后修改密码，撤销全部管理员会话并清除当前 Cookie |
 
 登录返回 `data: { role: "admin" | "key", expiresAt }`；status 已登录时的 `session` 使用同一结构，
 未登录时为 `{ authenticated: false, session: null }`。`role` 由服务端已验证身份推导，不接受客户端声明。
 不返回凭据或绑定 ID。
+
+修改密码要求新密码至少 12 个字符、最多 1024 字节，不能包含控制字符、使用常见弱口令或与当前密码相同。
+成功返回 `{ message }`，需要重新登录；当前密码错误或新密码不合法返回 400，并保留原会话。
+并发修改中只有旧密码哈希仍匹配的请求可以提交，冲突返回 409；密码更新与安全审计在同一事务提交。
+该入口共用登录尝试限流，超限返回 429。普通设置变更和管理员 API Key 变更不撤销密码登录会话，密钥身份会话也不受改密影响。
 
 会话由服务端保存，Cookie 属性为 `Path=/; HttpOnly; SameSite=Lax`，`Max-Age` /
 `Expires` 对齐固定有效期，`Secure` 沿用上述 Origin 规则。轮询不会续期。
@@ -796,11 +803,19 @@ OpenAI 复用已有限流协议解析器匹配额度桶、槽位、时长和明�
 上游消耗和模型组合变化仍可能造成误差；等价 USD 费用不是官方订阅价格或固定额度承诺，
 30 天折算也不是自然月额度。记录覆盖率不等于预测准确率，不输出未经校准的置信区间。
 
+### OpenAI 账号辅助请求
+
+OAuth 账号的额度、个人资料、订阅与重置卡请求先使用 `openai.api.base_url`。自定义上游明确返回 HTTP 404 时，
+仅回退一次到官方账号接口，沿用当前账号凭据与出站代理；其他状态码、解析错误或传输失败不触发回退。
+部署者需允许账号请求访问官方端点；回退不绕过账号出站代理，也不保证官方可达。
+回退后的响应或错误作为最终结果，不以原来的 404 覆盖。重置卡消费回退复用原始请求体和幂等键，
+传输失败仍按消费结果不明确处理。API Key 账号不会因此获得 OAuth 账号能力，也不会改变推理请求的目标地址。
+
 ### OpenAI 个人信息
 
 `GET /api/admin/accounts/personal-info?accountId=...` 需要管理员会话，当前由 OpenAI/Codex OAuth
-账号提供。后端并发读取资料统计与订阅，一次返回；每次请求均重新查询，不自动重试或
-刷新 credential，不读取本地 usage/billing 记录，也不缓存或估算统计结果。
+账号提供。后端并发读取资料统计与订阅，一次返回；每次请求均重新查询，除上述 404 路由回退外不自动重试，
+不刷新 credential，不读取本地 usage/billing 记录，也不缓存或估算统计结果。
 
 响应 `data` 包含：
 
@@ -842,7 +857,7 @@ OpenAI 复用已有限流协议解析器匹配额度桶、槽位、时长和明�
 | `billingCurrency` | string 或 null | 上游计费币种 |
 | `observedAt` | RFC 3339 字符串 | 本次查询时间 |
 
-订阅不写入额度快照或数据库，不参与账号状态或调度；单次上游查询最多 5 秒、响应最多 64 KiB，不重试。
+订阅不写入额度快照或数据库，不参与账号状态或调度；查询含 404 回退共用最多 5 秒预算，响应最多 64 KiB。
 上游失败或未提供有效周期时返回未知，不据此标记免费、过期或禁用；请求期间账号身份或 credential
 revision 变化时丢弃结果。
 
@@ -890,7 +905,13 @@ PostgreSQL 或 Redis。
 分组是 Provider-neutral 的账号集合；一个组可包含任意 Provider 账号，一个账号也可属于多个组。
 分组详情和列表返回 `disableFast`，创建时省略默认为 `false`，更新时省略或 `null` 保留现值。
 Client Key 绑定的任一分组开启此限制（包括已禁用分组）时，该 Key 的 OpenAI Responses 请求关闭 Fast；
-未绑定分组的 Key 只受全局限制，不按最终所选账号的分组判断。
+未绑定分组的 Key 不限制 Fast，不按最终所选账号的分组判断。
+
+关闭 Fast 只将顶层 `service_tier` 的 `priority`（含 `fast` 别名）改为显式 `default`，继续处理请求；
+不改变 `flex`、`ultrafast`、缺失值、默认档、嵌套字段或其他 Provider。
+HTTP 和每个 WebSocket `response.create` 均使用请求开始时的分组策略，同一请求重试保持该策略；
+HTTP 请求头及新建 WS 的握手提示按当时的最终出站档位构造；复用 WS 时不重发握手头，
+每个 `response.create` 仍独立应用档位策略，请求档位统计与本地费用估算使用各帧的最终出站档位。
 
 | 方法 | 路由 | 主要 query/body | 说明 |
 | --- | --- | --- | --- |
@@ -913,6 +934,7 @@ Client Key 绑定的任一分组开启此限制（包括已禁用分组）时，
 | `POST` | `/api/admin/client-keys/create` | 创建字段 | 创建带账号范围的 Client Key |
 | `GET` | `/api/admin/client-keys/reveal` | `id` | 显式读取完整明文 Key |
 | `POST` | `/api/admin/client-keys/update` | 更新字段 | 原子更新名称、分组范围和限额 |
+| `POST` | `/api/admin/client-keys/reset-budget` | `{ id, period }` | 管理员清零日／周已用金额；`period` 为 `daily`、`weekly` 或 `all` |
 | `POST` | `/api/admin/client-keys/enable` | `{ id }` | 启用 |
 | `POST` | `/api/admin/client-keys/disable` | `{ id }` | 禁用 |
 | `POST` | `/api/admin/client-keys/delete` | `{ id }` | 删除 |
@@ -963,6 +985,9 @@ Client Key 绑定的任一分组开启此限制（包括已禁用分组）时，
 `dailyResetsAt`、`weeklyResetsAt`（RFC3339 或 `null`）。
 记账和限额比较保留完整精度。
 日窗口按北京时间零点重置；周窗口从首次准入当天零点起持续七天，到期后在下一次使用时重新开启。
+手动重置仅清零所选周期的已用金额，保留限额上限、原到期时间和历史费用，返回 `{ id }`。
+未使用或已过期的窗口不会因手动重置而重新开启。重置前完成但延迟结算的费用不再计入所选周期；
+重置后完成的请求继续计费，包括重置时仍在进行的请求。操作保留管理员审计，不改变账号上游额度。
 费用按请求完成时间归属窗口。并发按同一 Key 的执行中请求累计，包含 SSE 与每个 WebSocket
 `response.create`；空闲连接不占名额，内部重试不重复占用。
 修改 Key 策略对既有 WebSocket 连接的下一次请求同样生效，已开始的请求保持原有快照。
@@ -1000,7 +1025,6 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 
 ```text
 openaiClientProfile
-disableFast
 requestLocationEnabled
 requestLocation
 modelMappings
@@ -1026,13 +1050,6 @@ accountAutoFreezeProbeEnabled
 accountAutoFreezeProbeModel
 accountAutoFreezeAdaptiveConcurrency
 ```
-
-`disableFast` 默认 `false`，更新时省略或 `null` 保留现值。全局开启时，所有 Key 的 OpenAI Responses 请求关闭 Fast；
-全局关闭时仍应用 Key 绑定分组的限制。关闭 Fast 只将顶层 `service_tier` 的 `priority`（含 `fast` 别名）
-改为显式 `default`，继续处理请求；不改变 `flex`、`ultrafast`、缺失值、默认档、嵌套字段或其他 Provider。
-HTTP 和每个 WebSocket `response.create` 均使用请求开始时的配置，同一请求重试保持该配置；
-HTTP 请求头及新建 WS 的握手提示按当时的最终出站档位构造；复用 WS 时不重发握手头，
-每个 `response.create` 仍独立应用档位策略，请求档位统计与本地费用估算使用各帧的最终出站档位。
 
 `requestLocationEnabled` 是必填布尔值，默认 `false`：关闭时不覆盖客户端原有位置和时区；开启时使用已保存的
 `requestLocation`。关闭不会清空自定义值，代理自定义位置仍优先。
@@ -1067,7 +1084,7 @@ HTTP 请求头及新建 WS 的握手提示按当时的最终出站档位构造�
 | `GET` | `/api/admin/settings/pricing` | 返回 `{ defaults, synced, overrides, syncedAt }` |
 | `POST` | `/api/admin/settings/pricing/update` | `{ provider, models, change }`，成功返回 `{ saved: true }` |
 | `POST` | `/api/admin/settings/pricing/sync/preview` | 无 body；返回 `{ prices, skipped }`，不写入配置 |
-| `POST` | `/api/admin/settings/pricing/sync` | 原样提交确认的 `{ prices, skipped }`；成功返回 `{ saved: true }` |
+| `POST` | `/api/admin/settings/pricing/sync` | `{ preview: { prices, skipped }, models: { openai: ["gpt-5.4"] } }`；成功返回 `{ saved: true }` |
 
 价目使用 `Provider → 精确上游模型 ID → { multiplierBps, bands }` 的映射。优先级为人工覆盖、已同步价目、
 内置价目；按档位合并，不从客户端模型别名或响应模型猜测价格。`syncedAt` 为 ISO 时间或 `null`。
@@ -1089,12 +1106,17 @@ OpenAI 长上下文为输入超过 272000 Token，xAI 为输入达到 200000 Tok
   配置，未提供档位重新继承来源；内置和同步均未登记的模型必须包含 `standard`。
 - `{ "action": "multiplier", "multiplierBps": 20000 }`：设置目标倍率，保留已有人工单价；重复提交不连续相乘。
 - `{ "action": "reset" }`：移除人工单价与倍率，恢复同步价或内置价；仅有人工价格的模型恢复为未配置。
+- `{ "action": "delete" }`：删除非内置模型的同步价目与人工配置；批量包含任何内置模型时整批返回 400，
+  即使该内置模型已有人工覆盖也不能删除。删除不影响历史账单，之后可重新添加或选中同步导入。
 
 一批更新原子提交并写审计，不覆盖未选中的模型。未知字段、错误类型和非法价格字符串等 JSON 合同错误
 返回 422；Provider、模型 ID、批量数量、倍率上限和不支持的档位等业务校验错误返回 400。
 models.dev 同步只导入可表示为当前文本 Token 计价的 OpenAI/xAI 模型；不完整价格、其他输出模态及
 不匹配的上下文梯度在 `skipped` 中返回 `provider/model`。确认会重新抓取价目；若与预览不同返回 400，
-需重新预览。来源不可用返回 502，已有价目保持不变。同步只更新来源层，始终保留人工单价与倍率。
+需重新预览。来源不可用返回 502，已有价目保持不变。`preview` 必须原样提交，`models` 按 Provider
+指定 1～10000 个待同步模型；空选择或未登记的模型返回 400。同步只更新选中模型的来源层，未选中模型
+及所有人工单价与倍率保持不变。选中的已同步模型若不再出现在来源价目中，则移除其来源层，恢复内置价格；
+没有内置价目的模型变为未配置。
 
 ### OpenAI 上游客户端身份
 

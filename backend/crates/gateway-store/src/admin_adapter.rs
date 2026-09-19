@@ -24,7 +24,7 @@ impl SettingsStore for AdminSettingsStoreAdapter {
 
     async fn sync_pricing(
         &self,
-        prices: gateway_core::metering::PricingOverrides,
+        changes: gateway_admin::model::pricing::PricingSyncChanges,
         context: &MutationContext,
     ) -> AdminStoreResult<gateway_admin::model::Revision> {
         let audit = mutation_audit(
@@ -36,7 +36,7 @@ impl SettingsStore for AdminSettingsStoreAdapter {
         );
         let revision = self
             .control_plane
-            .sync_pricing(prices, audit)
+            .sync_pricing(changes, audit)
             .await
             .map_err(|error| admin_store_error("model pricing sync", error))?;
         admin_revision(revision)
@@ -91,7 +91,6 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 refresh_margin_seconds: command.refresh_margin_seconds,
                 refresh_concurrency: command.refresh_concurrency,
                 max_concurrent_per_account: command.max_concurrent_per_account,
-                disable_fast: command.disable_fast,
                 request_location_enabled: command.request_location_enabled,
                 request_location: command.request_location,
                 request_interval_ms: command.request_interval_ms,
@@ -123,7 +122,6 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 "1",
                 vec![
                     "provider_request_profiles_json".to_owned(),
-                    "disable_fast".to_owned(),
                     "request_location_enabled".to_owned(),
                     "request_location_json".to_owned(),
                     "model_mappings_json".to_owned(),
@@ -235,7 +233,6 @@ pub(crate) fn admin_runtime_settings(
     Ok(AdminRuntimeSettings {
         openai_client_profile: settings.openai_client_profile,
         config_revision: admin_revision(settings.config_revision)?,
-        disable_fast: settings.disable_fast,
         request_location_enabled: settings.request_location_enabled,
         request_location: settings.request_location,
         model_mappings,
@@ -281,6 +278,24 @@ impl AuthStore for AuthStoreAdapter {
             .map_err(|error| admin_store_error("admin authentication", error))
     }
 
+    async fn change_password(
+        &self,
+        admin_user_id: &str,
+        expected_hash: &str,
+        password_hash: &str,
+        audit: AdminAuditModel,
+    ) -> AdminStoreResult<bool> {
+        postgres::AdminSecurityAuditRepository::change_password(
+            &self.security,
+            admin_user_id,
+            expected_hash,
+            password_hash,
+            auth_audit_record(audit)?,
+        )
+        .await
+        .map_err(|error| admin_store_error("administrator password", error))
+    }
+
     async fn create_password_hash_if_absent(
         &self,
         admin_user_id: &str,
@@ -312,8 +327,12 @@ impl AuthStore for AuthStoreAdapter {
 
     async fn store_session(&self, session_id: &str, session: &AuthSession) -> AdminStoreResult<()> {
         let subject = match &session.subject {
-            SessionSubject::Admin { admin_user_id } => redis::SessionSubjectRecord::Admin {
+            SessionSubject::Admin {
+                admin_user_id,
+                credential_fingerprint,
+            } => redis::SessionSubjectRecord::Admin {
                 admin_user_id: admin_user_id.clone(),
+                credential_fingerprint: credential_fingerprint.clone(),
             },
             SessionSubject::Key { client_key_id } => redis::SessionSubjectRecord::Key {
                 client_key_id: client_key_id.as_str().to_owned(),
@@ -365,57 +384,63 @@ impl AuthStore for AuthStoreAdapter {
     }
 
     async fn append_audit_event(&self, event: AdminAuditModel) -> AdminStoreResult<()> {
-        let config_revision = event
-            .config_revision
-            .map(|revision| i64::try_from(revision.get()))
-            .transpose()
-            .map_err(|_| {
-                AdminStoreError::new(
-                    AdminStoreErrorKind::Invalid,
-                    "admin audit",
-                    "config revision is outside the supported range",
-                )
-            })?;
-        let actor_kind = match event.actor_kind {
-            gateway_admin::model::auth::AuditActorKind::AdminSession => {
-                postgres::AdminAuditActorKind::AdminSession
-            }
-            gateway_admin::model::auth::AuditActorKind::AdminApiKey => {
-                postgres::AdminAuditActorKind::AdminApiKey
-            }
-            gateway_admin::model::auth::AuditActorKind::System => {
-                postgres::AdminAuditActorKind::System
-            }
-            gateway_admin::model::auth::AuditActorKind::Anonymous => {
-                postgres::AdminAuditActorKind::Anonymous
-            }
-        };
         postgres::AdminSecurityAuditRepository::append_admin_audit_event(
             &self.security,
-            postgres::AdminAuditEvent {
-                id: event.id,
-                actor_kind,
-                actor_admin_user_id: event.actor_admin_user_id,
-                actor_ref: event.actor_ref,
-                admin_request_id: event.request_id,
-                action: event.action,
-                entity_kind: event.entity_kind,
-                entity_ref: event.entity_ref,
-                config_revision,
-                changed_fields: event.changed_fields,
-                created_at: event.occurred_at,
-            },
+            auth_audit_record(event)?,
         )
         .await
         .map_err(|error| admin_store_error("admin audit", error))
     }
 }
 
+fn auth_audit_record(event: AdminAuditModel) -> AdminStoreResult<postgres::AdminAuditEvent> {
+    let config_revision = event
+        .config_revision
+        .map(|revision| i64::try_from(revision.get()))
+        .transpose()
+        .map_err(|_| {
+            AdminStoreError::new(
+                AdminStoreErrorKind::Invalid,
+                "admin audit",
+                "config revision is outside the supported range",
+            )
+        })?;
+    let actor_kind = match event.actor_kind {
+        gateway_admin::model::auth::AuditActorKind::AdminSession => {
+            postgres::AdminAuditActorKind::AdminSession
+        }
+        gateway_admin::model::auth::AuditActorKind::AdminApiKey => {
+            postgres::AdminAuditActorKind::AdminApiKey
+        }
+        gateway_admin::model::auth::AuditActorKind::System => postgres::AdminAuditActorKind::System,
+        gateway_admin::model::auth::AuditActorKind::Anonymous => {
+            postgres::AdminAuditActorKind::Anonymous
+        }
+    };
+    Ok(postgres::AdminAuditEvent {
+        id: event.id,
+        actor_kind,
+        actor_admin_user_id: event.actor_admin_user_id,
+        actor_ref: event.actor_ref,
+        admin_request_id: event.request_id,
+        action: event.action,
+        entity_kind: event.entity_kind,
+        entity_ref: event.entity_ref,
+        config_revision,
+        changed_fields: event.changed_fields,
+        created_at: event.occurred_at,
+    })
+}
+
 fn auth_session(record: redis::AuthSessionRecord) -> AdminStoreResult<AuthSession> {
     let subject = match record.subject {
-        redis::SessionSubjectRecord::Admin { admin_user_id } => {
-            SessionSubject::Admin { admin_user_id }
-        }
+        redis::SessionSubjectRecord::Admin {
+            admin_user_id,
+            credential_fingerprint,
+        } => SessionSubject::Admin {
+            admin_user_id,
+            credential_fingerprint,
+        },
         redis::SessionSubjectRecord::Key { client_key_id } => SessionSubject::Key {
             client_key_id: gateway_core::policy::ClientApiKeyId::new(client_key_id).map_err(
                 |_| {

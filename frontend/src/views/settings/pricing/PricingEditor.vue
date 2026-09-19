@@ -67,22 +67,22 @@ function updatePrice(field: keyof TokenPrices, value: string) {
 }
 function submit() {
   if (!model.value || new TextEncoder().encode(model.value).length > 128 || /\s/.test(model.value) || [...model.value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
-    validation.value = '模型 ID 必须为 1～128 字节，不含空白或控制字符。'
+    validation.value = '模型 ID 必须为 1～128 字节，不含空白或控制字符'
     return
   }
   if (bps.value === undefined) {
-    validation.value = '倍率范围为 0～100，最多四位小数。'
+    validation.value = '倍率范围为 0～100，最多四位小数'
     return
   }
   for (const [band, rates] of Object.entries(draft.value)) {
     if (Object.values(rates).some(price => !validPrice(price))) {
-      validation.value = '请完整填写该档位的四项单价：0～1000000，最多四位小数。'
+      validation.value = '请完整填写该档位的四项单价：0～1000000，最多四位小数'
       selectedBand.value = band as PriceBand
       return
     }
   }
   if (!props.row?.base.bands.standard && !draft.value.standard) {
-    validation.value = '新模型需要配置标准档单价。'
+    validation.value = '新模型需要配置标准档单价'
     selectedBand.value = 'standard'
     return
   }
@@ -141,13 +141,13 @@ function submit() {
         </template>
         <div :id="helpId" class="grid w-72 gap-2 p-3 text-cp-xs leading-relaxed text-cp-text-secondary">
           <p class="m-0">
-            模型 ID 使用实际发送给上游的名称，不是客户端别名。
+            模型 ID 使用实际发送给上游的名称，不是客户端别名
           </p>
           <p class="m-0">
-            自定义档位需填写四项单价，0 表示免费；单价上限 1000000，倍率范围 0～100，最多四位小数。
+            自定义档位需填写四项单价，0 表示免费，单价上限 1000000，倍率范围 0～100，最多四位小数
           </p>
           <p class="m-0">
-            仅调整本地估算与金额限额，不代表订阅实际扣费。保存后仅新请求生效，历史账单不变。
+            仅调整本地估算与金额限额，不代表订阅实际扣费，保存后仅新请求生效，历史账单不变
           </p>
         </div>
       </BasePopover>

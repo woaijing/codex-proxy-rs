@@ -52,7 +52,7 @@ interface PreviewTableRow {
 }
 
 const search = shallowRef('中继账号')
-const notes = shallowRef('优先保持当前账号，额度耗尽后再切换。')
+const notes = shallowRef('优先保持当前账号，额度耗尽后再切换')
 const brandColor = shallowRef('#5983F4')
 const invalidKey = shallowRef('sk-invalid')
 const disabledText = shallowRef('不可编辑')
@@ -382,7 +382,7 @@ function statusClass(status: PreviewTableRow['status']) {
     <section class="grid min-w-0 grid-cols-12 gap-6 overflow-hidden" aria-label="边界状态组件">
       <BaseCard padding="compact" class="col-span-4 h-full min-w-0 bg-cp-fill-quaternary! shadow-none!" title="空状态" description="BaseEmpty · BaseButton">
         <template #body>
-          <BaseEmpty title="暂无匹配账号" description="调整筛选条件，或添加一个新的上游账号。" class="flex-1">
+          <BaseEmpty title="暂无匹配账号" description="调整筛选条件，或添加一个新的上游账号" class="flex-1">
             <template #action>
               <BaseButton size="sm" variant="primary">
                 添加账号

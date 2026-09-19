@@ -1004,11 +1004,13 @@ impl CodexBackendClient {
     /// 获取 Codex usage JSON。
     pub async fn fetch_usage(&self, context: CodexRequestContext<'_>) -> CodexClientResult<Value> {
         let headers = self.account_request_headers(context)?;
+        let request = |base_url| {
+            self.client
+                .get(usage_endpoint_url(base_url))
+                .headers(headers.clone())
+        };
         let response = self
-            .client
-            .get(usage_endpoint_url(&self.base_url))
-            .headers(headers)
-            .send()
+            .send_account_request(request(&self.base_url), request(&self.official_base_url))
             .await?;
         let status = response.status();
         let diagnostics = response_meta::diagnostics(Some(status.as_u16()), response.headers());

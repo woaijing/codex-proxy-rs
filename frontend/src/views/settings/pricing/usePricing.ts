@@ -42,7 +42,7 @@ export function usePricing() {
   async function save(models: string[], change: PricingChange): Promise<boolean> {
     return await writeAction.run(async () => {
       await updatePricing({ provider: provider.value, models, change })
-      toast.success(change.action === 'reset' ? '已清除人工覆盖' : '模型定价已保存')
+      toast.success(change.action === 'delete' ? '模型价目已删除' : change.action === 'reset' ? '已清除人工覆盖' : '模型定价已保存')
       selected.value = []
       await load()
       return true
@@ -53,12 +53,12 @@ export function usePricing() {
       preview.value = await previewPricingSync()
     })
   }
-  async function confirmSync() {
-    if (!preview.value)
+  async function confirmSync(models: Record<string, string[]>) {
+    if (!preview.value || !Object.values(models).some(items => items.length))
       return
     const approved = preview.value
     await writeAction.run(async () => {
-      await syncPricing(approved)
+      await syncPricing({ preview: approved, models })
       preview.value = undefined
       toast.success('来源价目已同步，人工覆盖保持不变')
       await load()

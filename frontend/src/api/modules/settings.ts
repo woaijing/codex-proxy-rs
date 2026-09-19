@@ -8,7 +8,6 @@ export type RotationStrategy = 'smart' | 'quota_reset_priority' | 'round_robin' 
 export interface RuntimeSettings {
   openaiClientProfile: ClientProfileSelection
 
-  disableFast: boolean
   requestLocationEnabled: boolean
   requestLocation: RequestLocation
   modelMappings: Record<string, string>

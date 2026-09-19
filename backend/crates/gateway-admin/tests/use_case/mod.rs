@@ -283,6 +283,25 @@ impl AuthStore for BootstrapAuthStore {
         Ok(self.password_hash.lock().expect("password hash").clone())
     }
 
+    async fn change_password(
+        &self,
+        _: &str,
+        expected_hash: &str,
+        password_hash: &str,
+        audit: gateway_admin::model::auth::AdminAuditEvent,
+    ) -> AdminStoreResult<bool> {
+        let mut stored = self.password_hash.lock().unwrap();
+        let Some(credentials) = stored
+            .as_mut()
+            .filter(|value| value.as_str() == expected_hash)
+        else {
+            return Ok(false);
+        };
+        *credentials = password_hash.to_owned();
+        let _ = audit;
+        Ok(true)
+    }
+
     async fn create_password_hash_if_absent(
         &self,
         _: &str,
@@ -568,6 +587,14 @@ impl AccountRuntimeStore for UnavailableStore {
 
 #[async_trait]
 impl ClientKeyStore for UnavailableStore {
+    async fn reset_client_key_budget(
+        &self,
+        _: gateway_admin::model::client_keys::ResetClientKeyBudget,
+        _: &MutationContext,
+    ) -> AdminStoreResult<()> {
+        Err(unavailable("client key budget reset"))
+    }
+
     async fn get_client_key(
         &self,
         _: &ClientApiKeyId,
@@ -684,7 +711,7 @@ impl SettingsStore for UnavailableStore {
     }
     async fn sync_pricing(
         &self,
-        _: gateway_core::metering::PricingOverrides,
+        _: gateway_admin::model::pricing::PricingSyncChanges,
         _: &MutationContext,
     ) -> AdminStoreResult<gateway_admin::model::Revision> {
         panic!("unexpected pricing sync")

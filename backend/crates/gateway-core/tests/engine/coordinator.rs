@@ -677,7 +677,6 @@ fn plan_with_profiles(
         Vec::new(),
     )
     .expect("snapshot")
-    .with_disable_fast(disable_fast)
     .with_request_location(Some(request_location))
     .with_account_directory(Arc::clone(&directory));
     snapshot
@@ -686,6 +685,7 @@ fn plan_with_profiles(
             operation,
             Arc::new(
                 FrozenAccountScope::new(directory, ClientRoutingScope::all_accounts())
+                    .with_disable_fast(disable_fast)
                     .with_request_profiles(profiles),
             ),
             &RoutingContext {
@@ -4570,7 +4570,7 @@ fn deadline_before_first_event_records_no_provider_circuit_failure() {
 }
 
 #[test]
-fn global_location_and_fast_policy_reach_every_account_retry() {
+fn global_location_and_group_fast_policy_reach_every_account_retry() {
     let operation = generate_operation();
     let location = gateway_core::account::RequestLocation {
         timezone: "Asia/Tokyo".parse().unwrap(),

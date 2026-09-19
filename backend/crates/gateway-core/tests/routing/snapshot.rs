@@ -494,10 +494,10 @@ fn decompression_setting_should_validate_and_remain_frozen_across_publication() 
 }
 
 #[test]
-fn disable_fast_uses_bound_groups_and_global_policy_without_changing_account_scope() {
+fn disable_fast_uses_only_bound_groups_without_changing_account_scope() {
     use gateway_core::account::ProviderAccountId;
     use gateway_core::routing::AccountGroupId;
-    for global in [false, true] {
+    for disable_fast in [false, true] {
         for group_enabled in [false, true] {
             for bound in [false, true] {
                 let group_id = AccountGroupId::new("grp_00000000000000000000000000000001").unwrap();
@@ -507,8 +507,7 @@ fn disable_fast_uses_bound_groups_and_global_policy_without_changing_account_sco
                 let facts = SnapshotFacts::new(
                     revision(1),
                     revision(1),
-                    SnapshotSettingsFacts::new(3, 0, "smart", BTreeMap::new(), None, None)
-                        .with_disable_fast(global),
+                    SnapshotSettingsFacts::new(3, 0, "smart", BTreeMap::new(), None, None),
                     vec![SnapshotClientPolicyFacts::new(
                         ClientApiKeyId::new("key_fast_policy").unwrap(),
                         PlaintextClientApiKey::new("sk_fast_policy").unwrap(),
@@ -525,7 +524,7 @@ fn disable_fast_uses_bound_groups_and_global_policy_without_changing_account_sco
                             "Restricted".to_owned(),
                             group_enabled,
                         )
-                        .with_disable_fast(true),
+                        .with_disable_fast(disable_fast),
                         SnapshotAccountGroupFacts::new(
                             open_group_id.clone(),
                             "Open".to_owned(),
@@ -566,8 +565,8 @@ fn disable_fast_uses_bound_groups_and_global_policy_without_changing_account_sco
                     .unwrap();
                 assert_eq!(
                     plan.disable_fast(),
-                    global || bound,
-                    "global={global}, enabled={group_enabled}, bound={bound}"
+                    disable_fast && bound,
+                    "disable_fast={disable_fast}, enabled={group_enabled}, bound={bound}"
                 );
             }
         }

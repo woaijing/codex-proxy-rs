@@ -55,7 +55,8 @@ const tableRef = useTemplateRef<HTMLTableElement>('table')
 const horizontalScrolled = shallowRef(false)
 const horizontalCanScrollRight = shallowRef(false)
 
-function measureHorizontalScroll() {
+function updateScrollLayout() {
+  scrollbarRef.value?.update()
   const wrap = scrollbarRef.value?.wrapRef
   if (!wrap) {
     horizontalScrolled.value = false
@@ -78,12 +79,12 @@ function handleTableScroll(payload: { scrollTop: number, scrollLeft: number }) {
 
 onMounted(async () => {
   await nextTick()
-  measureHorizontalScroll()
+  updateScrollLayout()
 })
-useResizeObserver(() => [scrollbarRef.value?.wrapRef, tableRef.value].filter(Boolean), measureHorizontalScroll)
+useResizeObserver(() => [scrollbarRef.value?.wrapRef, tableRef.value].filter(Boolean), updateScrollLayout)
 watch([() => displayRows.value.length, () => props.columns], async () => {
   await nextTick()
-  measureHorizontalScroll()
+  updateScrollLayout()
 })
 
 const headerRowClass = computed(() => [

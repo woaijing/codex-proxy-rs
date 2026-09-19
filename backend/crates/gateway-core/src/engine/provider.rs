@@ -264,13 +264,17 @@ impl ProviderStreamAccountFeedback {
         {
             return;
         }
-        self.stats.report(
-            &self.provider_kind,
-            &self.account_id,
+        let feedback = if error.kind() == ProviderErrorKind::UpstreamCapacityUnavailable {
+            AccountAttemptFeedback::CapacityRejected {
+                first_output_ms: self.first_output_ms,
+            }
+        } else {
             AccountAttemptFeedback::Failed {
                 first_output_ms: self.first_output_ms,
-            },
-        );
+            }
+        };
+        self.stats
+            .report(&self.provider_kind, &self.account_id, feedback);
         self.reported = true;
     }
 }

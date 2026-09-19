@@ -19,6 +19,7 @@ export interface PricingRow {
   model: string
   provider: string
   source: 'builtin' | 'synced' | 'custom'
+  canDelete: boolean
   base: ModelPricing
   custom?: ModelPricing
   effective: ModelPricing
@@ -36,6 +37,7 @@ export function pricingRows(catalog: PricingCatalog, provider: string): PricingR
       base,
       custom: override,
       source: override ? 'custom' : synced[model] ? 'synced' : 'builtin',
+      canDelete: !Object.hasOwn(defaults, model),
       effective: { multiplierBps: override?.multiplierBps ?? 10_000, bands: { ...base.bands, ...override?.bands } },
     }
   })

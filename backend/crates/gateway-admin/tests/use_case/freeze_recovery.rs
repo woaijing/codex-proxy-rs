@@ -26,7 +26,6 @@ use super::accounts::{FakeAccountStore, FakeProviderAdmin, account_record, event
 fn runtime_settings(enabled: bool, probe_enabled: bool, adaptive: bool) -> RuntimeSettings {
     RuntimeSettings {
         openai_client_profile: None,
-        disable_fast: false,
         request_location_enabled: false,
         request_location: Default::default(),
         config_revision: revision(1),
@@ -67,7 +66,7 @@ impl SettingsStore for FreezeSettingsStore {
     }
     async fn sync_pricing(
         &self,
-        _: gateway_core::metering::PricingOverrides,
+        _: gateway_admin::model::pricing::PricingSyncChanges,
         _: &MutationContext,
     ) -> AdminStoreResult<gateway_admin::model::Revision> {
         panic!("unexpected pricing sync")
