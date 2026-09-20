@@ -12,7 +12,7 @@
 [![GHCR](https://img.shields.io/badge/GHCR-codex--proxy--rs-2496ED?logo=docker&logoColor=white&style=flat-square)](https://github.com/zyycn/codex-proxy-rs/pkgs/container/codex-proxy-rs)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 
-[快速预览](#快速预览) · [快速开始](#快速开始) · [客户端接入](#客户端接入) · [文档](#文档) · [社区](#社区) · [许可证](#许可证)
+[快速预览](#快速预览) · [快速开始](#快速开始) · [客户端接入](#客户端接入) · [文档](#文档) · [上游同步](#上游同步) · [社区](#社区) · [许可证](#许可证)
 
 </div>
 
@@ -123,6 +123,43 @@ curl http://127.0.0.1:8080/v1/models \
 - [管理端主题](docs/theme.md)
 - [数据库迁移](backend/migrations/README.md)
 - [贡献与审查](CONTRIBUTING.md)
+
+## 上游同步
+
+定期同步上游的重要修复，服务器使用经过验证的固定版本。需要同步时，在项目的新会话中复制以下提示词；
+项目路径不同则替换为实际路径。模板包含提交和推送授权，仅阅读本文不代表执行该任务。
+
+```text
+请直接完成本项目的上游同步，包含修改、验证、提交和推送。
+
+项目：D:\github\codex-proxy-rs
+我的仓库 origin：https://github.com/woaijing/codex-proxy-rs.git
+上游 upstream：https://github.com/zyycn/codex-proxy-rs.git
+目标：将 upstream/main 最新更新合入我的 main，保留 OpenCode 扩展。
+
+执行要求：
+1. 阅读 AGENTS.md、CONTRIBUTING.md 和 dev-guide，确认工作区、远程地址与实际提交差异。已有无关改动保留，必要时使用独立 worktree。
+2. 拉取上游，简要说明本次变化及影响，随后直接合并、解决冲突。
+3. 保留 OpenCode Zen/Go Key、管理端导入编辑、协议转换、身份与父会话关联、代理绑定、会话亲和和共享冷却；所有 Key 冷却时不得继续请求。
+4. 重点检查上游对账号调度、Provider 接口、管理端和数据库迁移的影响。迁移冲突先核实兼容性，不通过修改数据库迁移记录或 checksum 绕过问题。
+5. 根据实际差异执行必要验证：Rustfmt、严格 Clippy、相关测试、架构检查；前端有变化时执行 lint、构建和受影响流程验证。区分新增失败、已知环境失败和未执行项；仅在改动或失败需要时追加验证。新增且影响本次功能的失败应修复后再推送。
+6. 已授权创建提交、合并并推送到 origin/main。保留原始历史和 upstream，禁止强推、删除数据、推送到上游仓库。此次不发布 Release、不部署服务器。
+7. 常规实现选择自行决定，持续推进到完成。遇到必须由我处理的权限、凭据或数据兼容问题，说明具体阻塞及所需操作。
+
+最后用中文简要报告：同步的上游 SHA、我的最新 SHA、保留的功能、验证结果、剩余风险和推送结果。
+```
+
+服务器已经部署时，在提示词后补充当前运行版本或提交；尚未部署则注明“尚未部署”：
+
+```text
+服务器当前运行版本/提交是：____。请评估升级及数据库迁移兼容性，但不要连接或改动生产服务器。
+```
+
+在已打开本项目的会话中，也可以使用简短指令：
+
+```text
+请执行 README「上游同步」中的任务模板；已授权其中的提交和推送操作。服务器当前版本/部署状态：____。
+```
 
 ## 社区
 
