@@ -33,7 +33,7 @@ const windows = computed(() => [
           </div>
           <div>
             <div class="grid grid-cols-[repeat(20,minmax(0,1fr))] gap-0.75" :aria-label="window.limited ? `已用 ${window.percentage.toFixed(1)}%` : '不限额'">
-              <span v-for="block in 20" :key="block" class="h-5 rounded-xs" :class="block <= Math.ceil(Math.min(100, window.percentage) / 5) ? (window.percentage >= 100 ? 'bg-cp-error' : 'bg-cp-success') : 'bg-cp-fill-secondary'" />
+              <span v-for="block in 20" :key="block" class="h-7 rounded-xs" :class="block <= Math.ceil(Math.min(100, window.percentage) / 5) ? (window.percentage >= 100 ? 'bg-cp-error' : 'bg-cp-success') : 'bg-cp-fill-secondary'" />
             </div>
             <div class="mt-2 flex justify-between gap-2 font-mono text-cp-xs text-cp-text-secondary">
               <span>已用 {{ money(window.used) }}</span><span v-if="window.limited">{{ window.percentage.toFixed(1) }}%</span>
@@ -47,10 +47,10 @@ const windows = computed(() => [
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div class="flex items-center justify-between gap-2 rounded-cp bg-cp-fill-quaternary p-3 text-cp-xs text-cp-text-secondary">
-          <span class="flex items-center gap-1.5"><Network class="size-3.5" />并发上限</span><strong class="font-mono">{{ budget.maxConcurrency || '∞' }}</strong>
+          <span class="flex items-center gap-1.5 leading-none"><Network class="size-3.5 shrink-0 -translate-y-px" />并发上限</span><strong class="font-mono">{{ budget.maxConcurrency || '∞' }}</strong>
         </div>
         <div class="flex items-center justify-between gap-2 rounded-cp bg-cp-fill-quaternary p-3 text-cp-xs text-cp-text-secondary">
-          <span class="flex items-center gap-1.5"><Gauge class="size-3.5" />每分钟请求</span><strong class="font-mono">{{ budget.requestsPerMinute || '∞' }}</strong>
+          <span class="flex items-center gap-1.5 leading-none"><Gauge class="size-3.5 shrink-0 -translate-y-px" />每分钟请求</span><strong class="font-mono">{{ budget.requestsPerMinute || '∞' }}</strong>
         </div>
       </div>
     </div>

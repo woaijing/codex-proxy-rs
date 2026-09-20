@@ -137,23 +137,6 @@ fn request_with_opaque_headers(use_websocket: bool) -> CodexResponsesRequest {
     request
 }
 
-async fn read_http_request_head(stream: &mut TcpStream) -> Vec<u8> {
-    let mut request = Vec::new();
-    let mut buffer = [0_u8; 1024];
-    loop {
-        let read = stream.read(&mut buffer).await.expect("read HTTP request");
-        if read == 0 {
-            break;
-        }
-        request.extend_from_slice(&buffer[..read]);
-        if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
-            request.truncate(end + 4);
-            break;
-        }
-    }
-    request
-}
-
 fn raw_header_values(request: &[u8], target: &str) -> Vec<Vec<u8>> {
     request
         .split(|byte| *byte == b'\n')
@@ -183,7 +166,8 @@ async fn backend_http_should_preserve_business_headers_without_downstream_transp
     let address = listener.local_addr().expect("opaque HTTP server address");
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.expect("accept opaque HTTP client");
-        let request = read_http_request_head(&mut stream).await;
+        // 读完请求体再关闭连接，避免正文扩展后未读数据触发 Windows TCP 重置。
+        let request = read_http_request_with_body(&mut stream).await;
         write_completed_sse_response(&mut stream).await;
         request
     });
