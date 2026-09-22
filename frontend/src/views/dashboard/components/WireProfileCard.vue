@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Openai, Xai } from '@boxicons/vue'
-import { Box, CheckCircle2, Monitor, RefreshCw, ShieldCheck, Terminal, TriangleAlert } from '@lucide/vue'
+import { Box, CheckCircle2, Code, Monitor, RefreshCw, ShieldCheck, Terminal, TriangleAlert } from '@lucide/vue'
 
 import { computed, shallowRef, watch } from 'vue'
 import BaseCard from '@/components/base/BaseCard.vue'
@@ -42,7 +42,7 @@ const providerOptions = computed(() =>
   props.profiles.map(profile => ({
     label: providerLabel(profile.provider),
     value: profile.provider,
-    icon: profile.provider === 'openai' ? Openai : profile.provider === 'xai' ? Xai : undefined,
+    icon: providerIcon(profile.provider),
   })),
 )
 
@@ -171,6 +171,17 @@ watch(
 
 function providerLabel(provider: string) {
   return formatProviderLabel(provider)
+}
+
+// 图标沿用 ProviderIconGroup 的平台约定；未登记的平台不显示图标而不是留空白按钮。
+function providerIcon(provider: string) {
+  if (provider === 'openai')
+    return Openai
+  if (provider === 'xai')
+    return Xai
+  if (provider === 'opencode')
+    return Code
+  return undefined
 }
 </script>
 
