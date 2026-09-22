@@ -26,11 +26,15 @@ const currentUsageTextClass = computed(() => currentUsageWindow.value
   ? quotaWindowPresentation(currentUsageWindow.value, '2px').percentTextClass
   : 'text-cp-text-quaternary')
 const additionalEntryCount = computed(() => Math.max(summaryEntries.value.length - 1, 0))
+// 有上游额度窗口时优先展示额度；API Key 账号在没有窗口时退回本地累计用量。
+const showsLocalOnlyUsage = computed(() =>
+  props.account.authenticationKind === 'api_key' && summaryEntries.value.length === 0,
+)
 </script>
 
 <template>
   <div class="box-border grid min-h-16.5 w-full min-w-0 content-center gap-1.5 py-1.5">
-    <template v-if="account.authenticationKind === 'api_key'">
+    <template v-if="showsLocalOnlyUsage">
       <span
         class="flex min-w-0 items-baseline gap-1 font-mono tabular-nums"
         title="本地累计总 Token"

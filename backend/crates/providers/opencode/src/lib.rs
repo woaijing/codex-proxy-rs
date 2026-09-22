@@ -5,10 +5,12 @@ mod catalog;
 mod credential;
 mod identity;
 mod provider;
+mod quota;
 mod request;
 mod response;
 mod selection;
 mod stream;
+mod workers;
 
 use std::sync::Arc;
 
@@ -16,6 +18,7 @@ use gateway_admin::ports::provider::ProviderAdmin;
 use gateway_core::engine::provider::Provider;
 use gateway_core::provider_ports::ProviderStorePorts;
 use gateway_core::routing::ProviderKind;
+use gateway_core::task::WorkerContribution;
 
 pub use provider::{OpenCodeEndpointPolicy, OpenCodeProvider};
 
@@ -23,6 +26,7 @@ pub use provider::{OpenCodeEndpointPolicy, OpenCodeProvider};
 pub struct ProviderBundle {
     provider: Arc<OpenCodeProvider>,
     admin: Arc<admin::OpenCodeAdmin>,
+    worker_contributions: Vec<WorkerContribution>,
 }
 
 /// 使用现有账号、租约、代理与冷却端口初始化。
@@ -41,10 +45,26 @@ pub fn initialize_with_endpoint_policy(
         kind.clone(),
         ports.clone(),
         Arc::clone(&catalog),
+        Arc::clone(&endpoints),
+    ));
+    // 管理面的额度查询与数据面共用端点策略，测试可注入本地端点而不打真实上游。
+    let admin = Arc::new(admin::OpenCodeAdmin::new(
+        kind.clone(),
+        ports.accounts(),
+        catalog,
         endpoints,
     ));
-    let admin = Arc::new(admin::OpenCodeAdmin::new(kind, ports.accounts(), catalog));
-    Ok(ProviderBundle { provider, admin })
+    // 额度复核与数据面共用同一套账号端口，注册表按 Provider 名区分 owner。
+    let worker_contributions = workers::worker_contributions(
+        kind,
+        ports.accounts(),
+        Arc::clone(&admin) as Arc<dyn ProviderAdmin>,
+    )?;
+    Ok(ProviderBundle {
+        provider,
+        admin,
+        worker_contributions,
+    })
 }
 
 impl ProviderBundle {
@@ -56,6 +76,11 @@ impl ProviderBundle {
     #[must_use]
     pub fn admin_provider(&self) -> Arc<dyn ProviderAdmin> {
         self.admin.clone()
+    }
+
+    /// 取出后台任务贡献；只能调用一次，与其它 Bundle 的贡献一并交给 Host。
+    pub fn take_worker_contributions(&mut self) -> Vec<WorkerContribution> {
+        std::mem::take(&mut self.worker_contributions)
     }
 }
 

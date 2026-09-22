@@ -100,6 +100,16 @@ export function derivedAccountStatus(row: AccountRow): AccountStatus {
   return row.status
 }
 
+/**
+ * 账号是否有可查询的上游额度合同。
+ *
+ * API Key 账号通常只提供本地用量；OpenCode 的 Go 套餐在 API Key 上同样有额度端点，
+ * 因此不能只按认证方式判断。没有合同时不显示额度面板，也不提供刷新入口。
+ */
+export function supportsUpstreamQuota(account: AccountRow) {
+  return account.authenticationKind !== 'api_key' || account.provider === 'opencode'
+}
+
 export function visibleSummaryQuotaWindows(windows: AccountQuotaWindow[]) {
   const known = [...windows]
     .filter(window => window.group !== 'other')

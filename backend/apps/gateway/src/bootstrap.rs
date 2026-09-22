@@ -72,7 +72,7 @@ pub async fn run() -> Result<(), BootstrapError> {
     host.report_startup_ready("OpenAI Provider");
     let mut xai = provider_xai::initialize(provider_ports.clone()).await?;
     host.report_startup_ready("xAI Provider");
-    let opencode = provider_opencode::initialize(provider_ports)?;
+    let mut opencode = provider_opencode::initialize(provider_ports)?;
     let providers = ProviderRegistry::new([
         openai.core_provider(),
         xai.core_provider(),
@@ -119,6 +119,7 @@ pub async fn run() -> Result<(), BootstrapError> {
     plan.extend(core.take_worker_contributions());
     plan.extend(openai.take_worker_contributions());
     plan.extend(xai.take_worker_contributions());
+    plan.extend(opencode.take_worker_contributions());
     plan.extend(admin.take_worker_contributions());
     host.start_workers(plan, store.worker_leader_lease())?;
     host.report_startup_ready("Workers");

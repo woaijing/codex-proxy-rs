@@ -743,15 +743,41 @@ Messages 转换暂不支持显式推理强度和 JSON 输出格式。Responses �
 
 模型来自随版本发布的官方目录快照，区分 Zen / Go 和原生协议；不动态拉取新模型，也不代表某个 workspace 的余额或授权。
 管理端“刷新模型”仍返回此快照；同名模型对外公布两个产品共有的能力及较小的上下文、输出上限。
-OpenCode 没有已接入的上游额度查询，页面保留未知额度及本地用量；不提供费用估算、
-OAuth 刷新、个人资料、订阅或重置卡。新模型、协议变更与 workspace 权限需通过连接测试核实。
+Go 账号可查询上游额度：窗口划分（5 小时 / 每周 / 每月，分别为月度额度的 20% / 50% / 100%）
+来自官方 Go 文档；端点与响应结构以官方 console 源码为准（`GET /zen/go/v1/usage` 返回 `usage` 下的
+`rolling` / `weekly` / `monthly`，每块为 `status` / `percent` / `resetsAt`），官方 Go 文档本身
+没有记载该端点。`status` 只有 `ok` 与 `rate-limited` 两个取值，且与 `percent` 达到 `100` 恒等价；
+`resetsAt` 由"请求时刻 + 剩余秒数"算出，是窗口的重置时刻而非固定边界。上游只返回比例，不提供
+额度绝对值，因此窗口不显示已用/剩余量。Zen 账号没有对应端点
+（同源 `/zen/v1/usage` 实测 `404`），保留未知额度及本地用量，不发请求也不推断。
+额度读取遵循通用刷新语义：`GET /api/admin/accounts/quota` 只读上次观测，
+`POST /api/admin/accounts/quota/refresh` 才访问上游并按凭据 revision 写回；
+未观测过的账号返回空窗口，不能用 `0%` 冒充无用量。凭据导入在提交后同样后台尝试一次额度观测。
+上游明确限流或比例达到 `100%` 且重置时刻未到时，账号投影为 `quota_exhausted` 并排除出账号调度。
+这是保守判断：官方推理链路是"Go 限额超了就抛错，只有账号开了 Zen 余额回退才吞掉该错误、改按余额
+计费"，而该开关只存在于计费行，Go 数据面没有按 API Key 读取它的接口，用量响应也只有
+`status` / `percent` / `resetsAt` 三个字段，因此无法区分"触顶会被拒绝"与"触顶仍可服务"；
+启用回退的账号在窗口重置前不会被调度，窗口比例与重置时刻仍会展示。
+响应中的 `limitReached` 按查询时刻判断，已过重置时刻的窗口不再计入；但账号状态是已落库的结论，
+不由时间自行解除：Provider 后台 worker 在最早重置时刻重新求证，只有上游不再声明触顶才恢复可调度，
+上游不可达或响应不可解释时保留既有耗尽结论。
+官方文档按模型列出限额，但额度端点返回的是账号级共享池（用量表按 workspace + user 唯一，没有模型
+维度），因此这些窗口不参与周/月用量统计与容量预测。三个窗口是同一份账号级用量的三种时间尺度，
+不是三个独立额度池；响应只给已用比例，不给美元额度、余额或剩余量。
+不提供费用估算、OAuth 刷新、个人资料、订阅或重置卡；新模型、协议变更与 workspace 权限需通过连接测试核实。
 
-身份头沿用 OpenCode v1.18.31 的命名与关联语义：`User-Agent: opencode/1.18.31`、`x-opencode-client: cli`、
-`x-opencode-project`、`x-opencode-session`、`x-opencode-request`，子会话另带 `x-parent-session-id`。
+身份头沿用 OpenCode v1.18.31 的命名与关联语义：
+`User-Agent: opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14`（后两段由 SDK 层追加，
+版本随 1.18.31 锁定的依赖确定）、`x-opencode-client: cli`、`x-opencode-project`、`x-opencode-session`、
+`x-opencode-request`，子会话另带 `x-parent-session-id`。
 项目、会话和父会话按下游 Client Key 隔离映射；调用方可传同名请求头或 `metadata` 字段。
 会话也接受 `session_id` 或 `prompt_cache_key`，未提供时按独立请求处理；请求关联优先使用 `x-opencode-request`，
 其次为最后一条用户消息 ID，缺失时使用网关请求 ID 的稳定映射，Core 重试保持一致。
+网关派生的会话与请求标识保持官方 26 字符 identifier 形态，但由摘要稳定生成而非按毫秒时间戳递增，
+因此同一逻辑请求重试后仍是同一身份。
 这些是协议兼容身份，不代表真实客户端安装或设备指纹。
+Dashboard 的“通用上游身份”卡片按同一份常量展示该身份；OpenCode 不支持客户端身份选择，
+也不参与官方发布渠道对齐检查，因此卡片不显示版本策略与发布检查结果。
 
 Key 使用账号绑定的代理。遇到 401/402/403/429 或服务端错误时写入共享冷却；优先遵循 `Retry-After`，
 无此字段时 429 默认 120 秒，其余默认 60 秒。全部可选 Key 冷却时返回无可用账号错误并提供等待时间，

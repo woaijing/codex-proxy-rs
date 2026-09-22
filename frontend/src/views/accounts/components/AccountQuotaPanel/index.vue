@@ -5,7 +5,7 @@ import { RefreshCw, UserRound } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
 import BaseEmpty from '@/components/base/BaseEmpty.vue'
 import BaseIconButton from '@/components/base/BaseIconButton.vue'
-import { groupedAccountQuotaWindows, orderedPanelQuotaWindows } from '../../constants'
+import { groupedAccountQuotaWindows, orderedPanelQuotaWindows, supportsUpstreamQuota } from '../../constants'
 import AccountPlanBadge from '../AccountPlanBadge.vue'
 import AccountProfileModal from '../AccountProfileModal/index.vue'
 import AccountQuotaPanelEntry from './Entry.vue'
@@ -24,6 +24,14 @@ const emit = defineEmits<{
 const quotaEntries = computed(() => groupedAccountQuotaWindows(
   orderedPanelQuotaWindows(props.account.quota.windows),
 ))
+const hasUpstreamQuota = computed(() => supportsUpstreamQuota(props.account))
+const quotaScopeLabel = computed(() => {
+  if (props.account.provider === 'xai')
+    return 'xAI 用量窗口'
+  if (props.account.provider === 'opencode')
+    return 'OpenCode 额度'
+  return 'Codex 额度'
+})
 const profileOpen = shallowRef(false)
 </script>
 
@@ -35,10 +43,10 @@ const profileOpen = shallowRef(false)
           账号额度
         </h3>
         <p
-          v-if="account.authenticationKind !== 'api_key'"
+          v-if="hasUpstreamQuota"
           class="m-0 mt-1 flex min-w-0 items-center gap-1.5 text-cp-xs font-emphasis text-cp-text-secondary"
         >
-          <span>{{ account.provider === 'xai' ? 'xAI 用量窗口' : 'Codex 额度' }}</span>
+          <span>{{ quotaScopeLabel }}</span>
           <template v-if="account.provider === 'openai' && account.authenticationKind === 'oauth'">
             <span>·</span>
             <AccountPlanBadge :plan-type="account.planType" :plan-type-display="account.planTypeDisplay" size="sm" />
@@ -47,7 +55,7 @@ const profileOpen = shallowRef(false)
           <span>最近刷新: {{ account.quota.refreshedAtDisplay }}</span>
         </p>
       </div>
-      <div v-if="account.authenticationKind !== 'api_key'" class="flex shrink-0 items-center gap-0.5">
+      <div v-if="hasUpstreamQuota" class="flex shrink-0 items-center gap-0.5">
         <BaseIconButton
           v-if="account.provider === 'openai' && account.authenticationKind === 'oauth'"
           label="查看个人信息"
@@ -79,7 +87,7 @@ const profileOpen = shallowRef(false)
       </div>
     </div>
 
-    <div v-if="account.authenticationKind === 'api_key'" class="grid flex-1 place-items-center">
+    <div v-if="!hasUpstreamQuota" class="grid flex-1 place-items-center">
       <BaseEmpty title="暂不支持查询上游额度" surface="none" />
     </div>
     <div v-else class="grid min-h-0 gap-3">

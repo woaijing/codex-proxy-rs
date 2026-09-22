@@ -1,27 +1,35 @@
 //! Provider 只准备凭据事实，管理用例统一提交审计、配置与凭据事务。
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use gateway_admin::model::accounts::CredentialState;
 use gateway_admin::model::observability::{
-    CalculatedBillingBreakdown, DashboardWireProfile, ProviderBillingInput,
+    CalculatedBillingBreakdown, DashboardWireAttribute, DashboardWireProfile, DashboardWireTarget,
+    ProviderBillingInput,
 };
 use gateway_admin::model::provider_credentials::*;
 use gateway_admin::ports::provider::{ProviderAdmin, ProviderAdminError, ProviderAdminErrorKind};
-use gateway_core::account::{ProviderAccountId, ProviderAccountStore};
+use gateway_core::account::{
+    LoadedCredential, OpaqueProviderData, ProviderAccountId, ProviderAccountStore,
+    QuotaObservation, QuotaState, QuotaWriteOutcome,
+};
 use gateway_core::operation::{GenerateRequest, Operation, ProtocolPayload};
 use gateway_core::routing::{ProviderKind, UpstreamModelId};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::catalog::Catalog;
-use crate::credential::{Credential, invalid};
+use crate::credential::{Credential, Tier, invalid};
+use crate::provider::OpenCodeEndpointPolicy;
+use crate::{identity, quota};
 
 pub(crate) struct OpenCodeAdmin {
     kind: ProviderKind,
     accounts: Arc<dyn ProviderAccountStore>,
     catalog: Arc<Catalog>,
+    endpoints: Arc<dyn OpenCodeEndpointPolicy>,
 }
 
 impl OpenCodeAdmin {
@@ -29,15 +37,17 @@ impl OpenCodeAdmin {
         kind: ProviderKind,
         accounts: Arc<dyn ProviderAccountStore>,
         catalog: Arc<Catalog>,
+        endpoints: Arc<dyn OpenCodeEndpointPolicy>,
     ) -> Self {
         Self {
             kind,
             accounts,
             catalog,
+            endpoints,
         }
     }
 
-    async fn credential(&self, id: &ProviderAccountId) -> Result<Credential, ProviderAdminError> {
+    async fn loaded(&self, id: &ProviderAccountId) -> Result<LoadedCredential, ProviderAdminError> {
         let loaded = self
             .accounts
             .load_current_credential(id)
@@ -46,9 +56,78 @@ impl OpenCodeAdmin {
         if loaded.account.provider() != &self.kind {
             return Err(ProviderAdminError::new(ProviderAdminErrorKind::NotFound));
         }
+        Ok(loaded)
+    }
+
+    async fn credential(&self, id: &ProviderAccountId) -> Result<Credential, ProviderAdminError> {
         Credential::parse(Value::Object(
-            loaded.credential.expose_to_provider().clone(),
+            self.loaded(id)
+                .await?
+                .credential
+                .expose_to_provider()
+                .clone(),
         ))
+    }
+
+    /// 查询上游 Go 套餐额度；端点策略与数据面共用，测试可注入本地端点。
+    async fn refresh_usage(
+        &self,
+        loaded: &LoadedCredential,
+        credential: &Credential,
+    ) -> Result<Map<String, Value>, ProviderAdminError> {
+        let endpoint = self
+            .endpoints
+            .endpoint(credential.tier.as_str(), quota::USAGE_PATH);
+        let session = identity::quota_session(loaded.account.id().as_str());
+        quota::fetch_usage(
+            &endpoint,
+            &credential.api_key,
+            &session,
+            loaded.account.outbound_proxy(),
+        )
+        .await
+        .map_err(map_quota_error)
+    }
+
+    /// 以凭据 revision 为界写回额度观测；并发轮换造成的冲突不覆盖新凭据的观测。
+    async fn store_usage(
+        &self,
+        loaded: &LoadedCredential,
+        document: Map<String, Value>,
+        observed_at: DateTime<Utc>,
+        state: QuotaState,
+    ) -> Result<(), ProviderAdminError> {
+        let outcome = self
+            .accounts
+            .compare_and_swap_quota(QuotaObservation {
+                account_id: loaded.account.id().clone(),
+                expected_revision: loaded.account.revision(),
+                quota: OpaqueProviderData::new(document),
+                plan_type: None,
+                observed_at: observed_at.into(),
+                state,
+            })
+            .await
+            .map_err(|_| ProviderAdminError::new(ProviderAdminErrorKind::Unavailable))?;
+        match outcome {
+            QuotaWriteOutcome::Updated => Ok(()),
+            QuotaWriteOutcome::Conflict => {
+                Err(ProviderAdminError::new(ProviderAdminErrorKind::Conflict))
+            }
+        }
+    }
+
+    /// 读取已持久化的额度观测；没有观测时返回 `None`。
+    async fn stored_usage(
+        &self,
+        id: &ProviderAccountId,
+    ) -> Result<Option<QuotaObservation>, ProviderAdminError> {
+        Ok(self
+            .accounts
+            .get_quotas(std::slice::from_ref(id))
+            .await
+            .map_err(|_| ProviderAdminError::new(ProviderAdminErrorKind::Unavailable))?
+            .pop())
     }
 }
 
@@ -59,7 +138,28 @@ impl ProviderAdmin for OpenCodeAdmin {
     }
     async fn account_unavailable(&self, _: &ProviderAccountId) {}
     fn dashboard_wire_profile(&self) -> Option<DashboardWireProfile> {
-        None
+        Some(DashboardWireProfile {
+            provider: self.kind.as_str().to_owned(),
+            product: "OpenCode CLI".to_owned(),
+            version: crate::provider::CLIENT_VERSION.to_owned(),
+            build: None,
+            // 官方 CLI 只在身份头里声明版本与客户端类型，不声明系统、架构或终端；
+            // 这些是协议兼容身份而非设备指纹，因此不推断运行环境，统一保留未知标记。
+            target: DashboardWireTarget {
+                os_type: "—".to_owned(),
+                os_version: "—".to_owned(),
+                arch: "—".to_owned(),
+                terminal: "—".to_owned(),
+            },
+            user_agent: crate::provider::user_agent(),
+            attributes: vec![DashboardWireAttribute {
+                label: "客户端标识".to_owned(),
+                value: crate::provider::CLIENT_KIND.to_owned(),
+            }],
+            // 身份是随版本发布的固定常量，没有可核验的运行时快照，也不做发布渠道对齐检查。
+            verified_at: None,
+            release: None,
+        })
     }
     fn calculated_billing(
         &self,
@@ -246,14 +346,40 @@ impl ProviderAdmin for OpenCodeAdmin {
         &self,
         request: ProviderQuotaRequest,
     ) -> Result<ProviderQuota, ProviderAdminError> {
-        let credential = self.credential(&request.account_id).await?;
-        // 官方没有可验证的 Key 额度查询合同，空窗口表示未知，不能伪造剩余额度。
+        let loaded = self.loaded(&request.account_id).await?;
+        let credential = Credential::parse(Value::Object(
+            loaded.credential.expose_to_provider().clone(),
+        ))?;
+        // 只有 Go 套餐存在可验证的额度合同；Zen 没有对应端点（同源路径 404），
+        // 空窗口表示未知，不能伪造剩余额度。
+        if credential.tier != Tier::Go {
+            return Ok(empty_quota(credential.tier));
+        }
+        let (document, observed_at) = if request.refresh {
+            let document = self.refresh_usage(&loaded, &credential).await?;
+            let observed_at = Utc::now();
+            let windows = quota::interpret(&document).map_err(map_quota_error)?;
+            let state = quota::access_state(&windows, observed_at.into());
+            self.store_usage(&loaded, document.clone(), observed_at, state)
+                .await?;
+            (document, observed_at)
+        } else {
+            // 未要求刷新时只读已持久化的观测，避免面板轮询反复打上游。
+            let Some(observation) = self.stored_usage(&request.account_id).await? else {
+                return Ok(empty_quota(credential.tier));
+            };
+            // 展示的是观测时刻而不是本次读取时刻，否则旧快照会被显示成刚刚刷新。
+            let observed_at = DateTime::<Utc>::from(observation.observed_at);
+            (observation.quota.into_inner(), observed_at)
+        };
+        let windows = quota::interpret(&document).map_err(map_quota_error)?;
         Ok(ProviderQuota {
             plan_type: Some(credential.tier.as_str().to_owned()),
-            observed_at: None,
+            observed_at: Some(observed_at),
             refresh_token_expires_at: None,
-            windows: Vec::new(),
-            limit_reached: false,
+            // 触顶是快照事实，但要按当前时间判断窗口是否已经滚动过去。
+            limit_reached: quota::limit_reached(&windows, SystemTime::now()),
+            windows,
             provider_data: None,
         })
     }
@@ -279,6 +405,34 @@ impl ProviderAdmin for OpenCodeAdmin {
 
 fn unsupported() -> ProviderAdminError {
     ProviderAdminError::new(ProviderAdminErrorKind::Unsupported)
+}
+
+/// 没有可查询的额度合同时的空投影；空窗口表示未知，不能伪造剩余额度。
+fn empty_quota(tier: Tier) -> ProviderQuota {
+    ProviderQuota {
+        plan_type: Some(tier.as_str().to_owned()),
+        observed_at: None,
+        refresh_token_expires_at: None,
+        windows: Vec::new(),
+        limit_reached: false,
+        provider_data: None,
+    }
+}
+
+/// 额度失败只映射为可公开的静态提示；上游正文与凭据不进入管理错误。
+fn map_quota_error(error: quota::QuotaError) -> ProviderAdminError {
+    use ProviderAdminErrorKind as Kind;
+    use quota::QuotaError as Error;
+    let (kind, message) = match error {
+        Error::Unauthorized => (Kind::Invalid, "OpenCode 额度查询凭据无效，请检查账号授权"),
+        Error::NoPlan => (Kind::Invalid, "该 Key 没有 OpenCode Go 订阅，无法查询额度"),
+        Error::Invalid => (Kind::Invalid, "OpenCode 额度数据无效，请检查账号授权"),
+        Error::Upstream => (
+            Kind::Unavailable,
+            "OpenCode 额度查询失败，请检查出站连接与上游服务",
+        ),
+    };
+    ProviderAdminError::new(kind).with_public_message(message)
 }
 
 struct KeyRotationGuard;

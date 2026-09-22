@@ -34,6 +34,7 @@ async fn identity_scopes_projects_clients_and_parent_sessions_with_stable_messag
         ("key_a", "project_a", "root", "", "msg_3"),
         ("key_b", "project_a", "root", "", "msg_1"),
         ("key_a", "project_b", "root", "", "msg_1"),
+        ("key_a", "project_a", "root", "", ""),
     ] {
         let headers = [
             ("x-opencode-project", project),
@@ -85,6 +86,26 @@ async fn identity_scopes_projects_clients_and_parent_sessions_with_stable_messag
     );
     assert_eq!(header(1, "x-opencode-request"), "msg_2");
     assert!(!requests[0].headers.contains_key("x-parent-session-id"));
+    assert_eq!(
+        header(0, "user-agent"),
+        "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+    );
+    // 官方 identifier 为前缀加 12 位十六进制再加 14 位 base62，共 26 个字符。
+    let shape = |value: &str, prefix: &str| {
+        let rest = value
+            .strip_prefix(prefix)
+            .unwrap_or_else(|| panic!("{value}"));
+        assert_eq!(rest.len(), 26, "{value}");
+        assert!(
+            rest[..12].bytes().all(|byte| byte.is_ascii_hexdigit())
+                && rest[12..].bytes().all(|byte| byte.is_ascii_alphanumeric()),
+            "{value}"
+        );
+    };
+    shape(header(0, "x-opencode-session"), "ses_");
+    shape(header(1, "x-parent-session-id"), "ses_");
+    // 客户端未提供请求关联时按网关请求 ID 稳定派生，仍保持官方形态。
+    shape(header(5, "x-opencode-request"), "msg_");
 }
 
 #[tokio::test]

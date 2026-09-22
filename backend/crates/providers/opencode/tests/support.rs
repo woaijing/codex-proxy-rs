@@ -22,10 +22,30 @@ use std::time::{Duration, SystemTime};
 pub struct Store {
     pub accounts: Mutex<BTreeMap<ProviderAccountId, LoadedCredential>>,
     pub cooldowns: Mutex<BTreeMap<ProviderAccountId, ProviderCooldown>>,
+    pub quotas: Mutex<BTreeMap<ProviderAccountId, QuotaObservation>>,
     pub starts: AtomicUsize,
     pub active: Arc<AtomicUsize>,
     pub fail_cooldown: AtomicBool,
+    pub fail_listing: AtomicBool,
     pub affinity: Mutex<BTreeMap<String, ProviderAccountId>>,
+}
+
+impl Store {
+    /// 已持久化的额度观测，供用例断言写回结果。
+    pub fn quota(&self, id: &ProviderAccountId) -> Option<QuotaObservation> {
+        self.quotas.lock().unwrap().get(id).cloned()
+    }
+
+    /// 账号当前持久化的额度访问事实，供断言复核是否清除了耗尽结论。
+    pub fn account_quota(&self, id: &ProviderAccountId) -> QuotaState {
+        self.accounts
+            .lock()
+            .unwrap()
+            .get(id)
+            .expect("seeded account")
+            .account
+            .quota()
+    }
 }
 
 pub fn ports(store: &Arc<Store>) -> ProviderStorePorts {
@@ -72,6 +92,9 @@ impl ProviderAccountStore for Store {
         &self,
         _provider: &ProviderKind,
     ) -> Result<Vec<ProviderAccount>, StoreError> {
+        if self.fail_listing.load(Ordering::SeqCst) {
+            return Err(StoreError::new(StoreErrorKind::Unavailable));
+        }
         Ok(self
             .accounts
             .lock()
@@ -115,15 +138,49 @@ impl ProviderAccountStore for Store {
     }
     async fn get_quotas(
         &self,
-        _accounts: &[ProviderAccountId],
+        accounts: &[ProviderAccountId],
     ) -> Result<Vec<QuotaObservation>, StoreError> {
-        panic!("unexpected account operation")
+        let quotas = self.quotas.lock().unwrap();
+        Ok(accounts
+            .iter()
+            .filter_map(|id| quotas.get(id).cloned())
+            .collect())
     }
     async fn compare_and_swap_quota(
         &self,
-        _observation: QuotaObservation,
+        observation: QuotaObservation,
     ) -> Result<QuotaWriteOutcome, StoreError> {
-        panic!("unexpected account operation")
+        let account_id = observation.account_id.clone();
+        {
+            let mut accounts = self.accounts.lock().unwrap();
+            let Some(loaded) = accounts.get_mut(&account_id) else {
+                return Ok(QuotaWriteOutcome::Conflict);
+            };
+            if loaded.account.revision() != observation.expected_revision {
+                return Ok(QuotaWriteOutcome::Conflict);
+            }
+            // 真实 Store 把额度文档与额度访问事实原子写回同一行，并按访问观测时刻单调更新。
+            // 这里保持同样的合同，否则用例无法验证复核是否真的解除了耗尽结论。
+            let applies = observation.state.observed_at().is_some_and(|next| {
+                loaded
+                    .account
+                    .quota()
+                    .observed_at()
+                    .is_none_or(|current| current <= next)
+            });
+            if applies {
+                let current = loaded.account.clone();
+                loaded.account = current.clone().with_account_facts(
+                    current.enabled(),
+                    current.credential_state(),
+                    observation.state,
+                    current.last_error_reason(),
+                    current.last_error_message().map(str::to_owned),
+                );
+            }
+        }
+        self.quotas.lock().unwrap().insert(account_id, observation);
+        Ok(QuotaWriteOutcome::Updated)
     }
     async fn touch_quota_observation(
         &self,
@@ -510,7 +567,29 @@ impl provider_opencode::OpenCodeEndpointPolicy for Endpoint {
     }
 }
 
+/// Go 数据面的额度端点；与数据面共用端点策略，因此落在注入的 base 之下。
+pub const USAGE_PATH: &str = "/go/usage";
+
+/// 官方 Go 文档声明的三个窗口；与 `opencode-usage-report` 的 `go-canonical` fixture 同形。
+pub fn canonical_usage() -> serde_json::Value {
+    json!({"usage": {
+        "rolling": {"status": "ok", "percent": 12, "resetsAt": "2099-09-16T13:40:00Z"},
+        "weekly": {"status": "ok", "percent": 57, "resetsAt": "2099-09-18T00:00:00Z"},
+        "monthly": {"status": "ok", "percent": 3, "resetsAt": "2099-10-01T00:00:00Z"}
+    }})
+}
+
 pub fn seed(store: &Store, suffix: &str, tier: &str) -> ProviderAccountId {
+    seed_with_quota(store, suffix, tier, QuotaState::unknown())
+}
+
+/// 与 `seed` 相同，但允许指定账号已持久化的额度访问事实。
+pub fn seed_with_quota(
+    store: &Store,
+    suffix: &str,
+    tier: &str,
+    quota: QuotaState,
+) -> ProviderAccountId {
     let id = ProviderAccountId::new(format!("acct_{suffix}")).unwrap();
     let account = ProviderAccount::new(
         id.clone(),
@@ -522,13 +601,7 @@ pub fn seed(store: &Store, suffix: &str, tier: &str) -> ProviderAccountId {
         None,
     )
     .with_profile(None, None, Some(tier.to_owned()))
-    .with_account_facts(
-        true,
-        CredentialState::Ready,
-        QuotaState::unknown(),
-        None,
-        None,
-    );
+    .with_account_facts(true, CredentialState::Ready, quota, None, None);
     let credential = PlaintextCredential::new(
         json!({"api_key":format!("test-key-{suffix}"),"tier":tier})
             .as_object()

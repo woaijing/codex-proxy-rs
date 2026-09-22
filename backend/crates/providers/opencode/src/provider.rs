@@ -24,6 +24,24 @@ use crate::identity::Identity;
 use crate::selection::{Selector, error, infrastructure};
 use crate::stream::{Decoder, protocol};
 
+/// 官方 CLI 版本；出站身份头与 Dashboard 画像共用同一事实，不允许各自维护副本。
+pub(crate) const CLIENT_VERSION: &str = "1.18.31";
+
+/// 官方 CLI 客户端标识，对应 `x-opencode-client`。
+pub(crate) const CLIENT_KIND: &str = "cli";
+
+/// AI SDK 在 `postToApi` 内追加到 User-Agent 的片段，与 opencode 1.18.31 锁定的依赖一致：
+/// `ai` 6.0.168 与 `@ai-sdk/openai-compatible` 2.0.41 都依赖 `@ai-sdk/provider-utils` 4.0.23，
+/// 而该包按 `ai-sdk/provider-utils/${VERSION}` 拼接；`runtime/bun/<版本>` 来自
+/// `getRuntimeEnvironmentUserAgent()` 对 Bun `navigator.userAgent` 的小写化，版本随 `packageManager: bun@1.3.14`。
+const SDK_USER_AGENT_SUFFIX: &str = "ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14";
+
+/// 出站 User-Agent。官方 CLI 自身只写 `opencode/<版本>`，其余片段由 SDK 层追加；
+/// 升级 opencode 或 SDK 版本时三段都要重新核对，不能只改版本号。
+pub(crate) fn user_agent() -> String {
+    format!("opencode/{CLIENT_VERSION} {SDK_USER_AGENT_SUFFIX}")
+}
+
 /// OpenCode Zen / Go Provider；通过 Core 端口选择账号并持有租约。
 pub struct OpenCodeProvider {
     selector: Arc<Selector>,
@@ -124,8 +142,8 @@ impl Provider for OpenCodeProvider {
             .post(endpoint)
             .json(&body)
             .header("accept", "text/event-stream")
-            .header("user-agent", "opencode/1.18.31")
-            .header("x-opencode-client", "cli")
+            .header("user-agent", user_agent())
+            .header("x-opencode-client", CLIENT_KIND)
             .header("x-opencode-project", &identity.project)
             .header("x-opencode-session", &identity.session)
             .header("x-opencode-request", &identity.request);

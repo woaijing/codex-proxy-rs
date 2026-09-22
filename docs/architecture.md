@@ -67,7 +67,7 @@ flowchart LR
 | `gateway-host` | 配置加载、日志、HTTP 生命周期、Worker 监督、系统更新及外部价格源适配 |
 | `providers/openai` | OpenAI OAuth、账号选择、目录、额度、Responses/Images/Search transport |
 | `providers/xai` | xAI OAuth session、账号选择、目录、额度和 Grok/Responses 转换 |
-| `providers/opencode` | Zen / Go Key、身份关联、按产品的模型协议目录和 Responses/Chat/Messages 转换 |
+| `providers/opencode` | Zen / Go Key、身份关联、按产品的模型协议目录、Go 额度查询与耗尽复核、Responses/Chat/Messages 转换 |
 | `frontend` | Vue 管理端与 Key 用量页，仅通过各自身份允许的控制面 API 访问状态 |
 
 依赖方向遵守四条规则：
@@ -213,6 +213,8 @@ OpenAI 的 OAuth 与 API Key 共用现有账号和事务。API Key 的 Base URL�
 API Key 默认 HTTP/SSE，可选 WS 优先；选号先验证传输资格，WS pool 与 continuation 按凭据版本隔离。
 OpenCode Provider 使用独立的 Zen / Go 凭据合同，通过中立凭据用例复用凭据存储、导入和轮换事务。
 它按产品和官方目录快照选择上游协议，将 Responses 输入转换为该模型的原生请求；转换不进入 API 或其它 Provider。
+Go 套餐的额度合同由 Provider 自己解释，并注册一个只复核已耗尽账号的后台 worker：额度耗尽结论会排除账号调度，
+而 `reset_at` 只是重新求证的时刻而非恢复证据，因此没有该 worker 时账号无法自行回到可调度状态。
 账号选择复用 Core 权重、作用域与排队，出站请求持有账号租约并使用其绑定代理；上游错误产生的冷却经 Store 端口协调。
 全部账号冷却时返回带等待时间的无可用账号错误，不以冷却账号兜底。项目和会话身份按客户端密钥隔离，成功切换账号后以 CAS 更新会话亲和。
 OAuth 与 API Key 共用业务请求、响应和能力透传链路，差异限定在上游地址、认证、传输配置及明确的上游请求合同适配。
