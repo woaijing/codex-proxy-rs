@@ -10,7 +10,7 @@ Codex Proxy RS 是单进程、单副本运行的多 Provider AI 网关，同时�
 
 - 面向客户端的 OpenAI Responses、Images、standalone Search 和模型目录协议；
 - 面向管理员的 `/api/admin/*` 控制面和 Vue 管理端；
-- 面向 Key 持有者的 `/api/key-usage/*` 用量与客户端配置接口和独立 `/key-usage` 页面；
+- 面向 Key 持有者的 `/api/key-usage/*` 用量与客户端配置接口、独立 `/key-usage` 页面，以及 Bearer 鉴权的 `/v1/usage` 额度查询；
 - OpenAI、xAI 与 OpenCode 三个编译期 Provider；
 - PostgreSQL 持久化、Redis 协调状态以及 S3/R2 数据库备份。
 
@@ -211,12 +211,11 @@ OpenAI 的 OAuth 与 API Key 共用现有账号和事务。API Key 的 Base URL�
 通过通用画像输出客户端目录，OAuth 原生对象保留。通用账号层按 Provider 提交的 credential state 调度，不以是否存在
 上游用户 ID 推断可用性；OAuth 未完成身份投影时由 Provider 保持 `unknown`。状态恢复和未补齐身份的凭据轮换保留 `unknown`。
 API Key 默认 HTTP/SSE，可选 WS 优先；选号先验证传输资格，WS pool 与 continuation 按凭据版本隔离。
-OAuth 与 API Key 共用业务请求、响应和能力透传链路，差异限定在上游地址、认证与传输配置。
-
 OpenCode Provider 使用独立的 Zen / Go 凭据合同，通过中立凭据用例复用凭据存储、导入和轮换事务。
 它按产品和官方目录快照选择上游协议，将 Responses 输入转换为该模型的原生请求；转换不进入 API 或其它 Provider。
 账号选择复用 Core 权重、作用域与排队，出站请求持有账号租约并使用其绑定代理；上游错误产生的冷却经 Store 端口协调。
 全部账号冷却时返回带等待时间的无可用账号错误，不以冷却账号兜底。项目和会话身份按客户端密钥隔离，成功切换账号后以 CAS 更新会话亲和。
+OAuth 与 API Key 共用业务请求、响应和能力透传链路，差异限定在上游地址、认证、传输配置及明确的上游请求合同适配。
 OpenAI 模型目录用于发现，不因目录缺项拒绝请求；管理员配置的模型权限仍由 Core 与选号链路执行。
 
 - OpenAI 是透明边界。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
@@ -228,7 +227,8 @@ OpenAI 模型目录用于发现，不因目录缺项拒绝请求；管理员配�
   `body.rs` 管理已知顶层参数的过滤、缺省值补齐和已确认不兼容的 `input` 形状适配；兼容基准为 Codex Core/Desktop 请求协议，
   不持有账号身份保护或会话规范化逻辑。
   Provider 在 `transport/request.rs` 解码不透明头时组合兼容、身份与 HTTP 规则，
-  同时调用正文兼容规则；HTTP/SSE 与 WebSocket 共用此边界。
+  同时调用不依赖账号的正文兼容规则。`body.rs` 中非官方客户端及跨客户端历史回填兼容的入口，
+  由 Provider 在选定 Codex/OAuth 账号后、HTTP/WS 分流前调用；API Key 上游跳过该入口。
   `transport/headers.rs` 负责上游身份保护和官方头组装。
   会话别名只规范化请求头，不清除正文身份字段；未知业务扩展与响应诊断头不受影响，字段见
   [Responses 合同](api.md#3-openai-数据面与模型目录)。提示词、工具及业务正文不做客户端品牌清洗。
@@ -345,8 +345,9 @@ AuthService 每次恢复 Key 会话时重新检查 Key 是否存在且启用；K
 管理员会话保存由已加盐密码哈希派生的指纹，每次恢复时与 PostgreSQL 当前密码核对；普通设置变更不影响该绑定。
 改密在 AuthService 验证当前密码和新密码策略，Store 以旧哈希条件更新密码并在同一 PostgreSQL 事务记录审计。
 事务提交后旧管理员会话的指纹失配，不依赖 Redis 批量删除完成撤销；原始密码及密码哈希不进入 Redis。
-KeyUsageService 从 AuthService 的服务端身份确定唯一查询范围，复用 ClientKeyStore 的额度账本投影和
-ObservabilityStore 的范围查询；API 只输出单页所需的字段白名单，不复用管理员的宽响应。
+KeyUsageService 从 AuthService 的服务端身份或 Core 的 ClientKeyVerifier 只读校验确定唯一查询范围，复用 ClientKeyStore 的额度账本投影和
+ObservabilityStore 的范围查询；Bearer 查询仅提供当前额度，不执行推理准入或开启窗口。
+API 只输出各入口所需的字段白名单，不复用管理员的宽响应。
 客户端配置通过 ClientKeyStore 显式读取当前会话绑定 Key 的明文，不进入用量响应。
 前端 `/key-usage` 独立于管理布局，不挂载管理员菜单或请求管理接口；配置弹窗和 Codex / CCSwitch
 配置生成逻辑与管理端共用，明文仅在打开弹窗时获取，关闭后清除，不持久化到浏览器。
@@ -522,7 +523,8 @@ OpenAI 订阅周期属于按需个人信息，不是额度事实。Admin 账号�
 
 账号容量预测属于 Admin 的只读派生规则，不参与 quota 权威状态、调度或金额结算。Store 通过专用采样端口
 在同一 SQL 快照内返回截至观测时间的累计数值及有界历史 Provider 文档；文档仅由具体 Provider 复用协议
-解析器解释，Admin 按中立的额度事实选择近期进度段。该采样不改变全站完整交付用量口径，不创建第二份
+解析器解释，Admin 按中立的额度事实选择近期进度段预测剩余量，再加本周期已记录用量形成周期总量。
+周期以额度重置为边界，重置后累计与样本重新开始。该采样不改变全站完整交付用量口径，不创建第二份
 持久化额度状态。部分 Token/美元费用缺失仅提示精度限制，继续按已记录数值估算；对应数值完全不可用时
 才不返回该项预测，不按请求数量补齐未知消耗。历史请求完成时间只是额度时间的近似，不承诺严格扣额归因
 或预测准确率。公开字段与采样门槛见 [周/月额度预测](api.md#周月额度预测)。
@@ -564,9 +566,10 @@ Worker 由各 Bundle 贡献、由 Host 统一监督：
   以及账号冻结恢复 worker（容量熔断的自适应并发下调与到期探测解冻）；
 - Provider：credential refresh、quota/catalog 健康和官方版本/etag 检查。
 
-账号容量熔断默认关闭。启用后，仅普通请求收到的容量类上游错误（`server_is_overloaded` 等与
-5xx 不可用）按滑动窗口计数，并把当时观测到的在途并发并入峰值证据；本地连接保护与诊断探测
-不参与容量计数或峰值采样。这些错误不证明凭据或配额失效，不进入账号失败状态。达到阈值后写入
+账号容量熔断默认关闭。启用后，仅普通请求收到的明确容量拒绝（`server_is_overloaded`、`slow_down`
+或结构化错误中的明确过载提示）按滑动窗口计数，并把当时观测到的在途并发并入峰值证据；
+普通 5xx、未识别的上游错误、本地连接保护与诊断探测不参与容量计数或峰值采样。
+这些错误不证明凭据或配额失效，不进入账号失败状态。达到阈值后写入
 账号级 Redis 容量冷却，调度立即跳过该账号；管理端沿用限流状态，通过原因区分容量冻结与上游限流。
 冻结与计数由 Redis 保存，不改变 PostgreSQL 账号状态。需要探测的冻结在到期后仍阻止调度，恢复
 worker 复用连接测试探针执行真实上游调用，并按冻结代次处理结果：成功清除，失败按配置时长顺延，
@@ -609,6 +612,8 @@ HTTP Client 构造失败也不会阻断网关启动。外部解析在已认证�
   备份设置等明确的敏感 Admin 合同返回。
 - OAuth pending flow 使用有期限、带 owner 的一次性 claim；事务成功后才消费，失败释放 claim。
 - 在线更新校验 Release host、大小、SHA-256 和归档路径，并只允许同一大版本内更新。
+  Host 在受理时持久化任务并转交后台执行，任务持有操作锁与终态写入责任，不依赖 HTTP 请求的生命周期。
+  状态文件是更新结果的权威来源，SSE 终态在状态落盘后发送；Host 关闭与任务析构都必须收敛状态。
 
 PostgreSQL 备份恢复属于人工维护操作。当前没有部署级维护模式开关，需要先停止应用，
 离线处理快照中的非终态任务、计划游标和到期清理条件，再重新验证对象存储并恢复计划。

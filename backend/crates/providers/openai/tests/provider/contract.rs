@@ -267,6 +267,220 @@ async fn selected_proxy_location_overrides_global_and_reloads_without_mutating_c
 
 const OFFICIAL_FIXTURE: &[u8] =
     include_bytes!("../transport/fixtures/official_models_snapshot.json");
+
+#[tokio::test]
+async fn replay_compatibility_should_remove_only_reasoning_status_on_both_transports() {
+    let input = json!([
+        {"type":"message","role":"user","status":"completed","content":[{"type":"input_text","text":"hello"}]},
+        {"type":"reasoning","id":"rs_replay","status":"completed","summary":[],"content":[],"encrypted_content":"test-cipher","extension":{"status":"keep","content":[1]}},
+        {"type":"function_call","call_id":"call_replay","name":"echo","arguments":"{}","status":"completed"},
+        {"type":"function_call_output","call_id":"call_replay","output":{"status":"keep","content":[1]},"status":"completed"},
+        {"type":"tool_search_output","call_id":"call_search","status":"completed","tools":[]},
+        {"type":"reasoning","status":"in_progress","summary":[],"encrypted_content":"second-test-cipher"},
+        {"type":"future_item","status":"keep","content":[1]},
+        "opaque-item"
+    ]);
+    let mut expected = input.clone();
+    for index in [1, 5] {
+        expected[index]
+            .as_object_mut()
+            .unwrap()
+            .shift_remove("status");
+    }
+    for websocket in [false, true] {
+        let actual = capture_replay_compatibility_request(input.clone(), false, websocket).await;
+        // 比较序列化结果，同时保护未修改字段的顺序。
+        assert_eq!(actual["input"].to_string(), expected.to_string());
+    }
+}
+
+#[tokio::test]
+async fn replay_compatibility_should_keep_encrypted_history_when_removing_nonempty_content() {
+    let input = json!([
+        {"type":"reasoning","id":"rs_replay","summary":[{"type":"summary_text","text":"keep summary"}],"content":[{"type":"reasoning_text","text":"synthetic replay"}],"encrypted_content":"test-cipher","extension":9007199254740993_u64},
+        {"type":"compaction","id":"cmp_replay","content":[{"type":"text","text":"keep compaction"}],"encrypted_content":"compaction-test-cipher"},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"keep answer"}]}
+    ]);
+    let mut expected = input.clone();
+    expected[0].as_object_mut().unwrap().shift_remove("content");
+    for websocket in [false, true] {
+        let actual = capture_replay_compatibility_request(input.clone(), false, websocket).await;
+        assert_eq!(actual["input"].to_string(), expected.to_string());
+    }
+}
+
+#[tokio::test]
+async fn replay_compatibility_should_preserve_plaintext_only_and_unrecognized_content_shapes() {
+    let input = json!([
+        {"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"only history"}]},
+        {"type":"reasoning","summary":[],"content":[1],"encrypted_content":""},
+        {"type":"reasoning","summary":[],"content":[1],"encrypted_content":"  "},
+        {"type":"reasoning","summary":[],"content":[1],"encrypted_content":null},
+        {"type":"reasoning","summary":[],"content":[1],"encrypted_content":42},
+        {"type":"reasoning","summary":[],"content":{"status":"keep"},"encrypted_content":"test-cipher"},
+        {"type":"reasoning","summary":[],"content":"keep","encrypted_content":"test-cipher"}
+    ]);
+    for websocket in [false, true] {
+        let actual = capture_replay_compatibility_request(input.clone(), false, websocket).await;
+        assert_eq!(actual["input"].to_string(), input.to_string());
+    }
+}
+
+#[tokio::test]
+async fn replay_compatibility_should_leave_normal_official_history_unchanged() {
+    let input = json!([
+        {"type":"reasoning","id":"rs_empty","summary":[],"content":[],"encrypted_content":"test-cipher"},
+        {"type":"reasoning","id":"rs_null","summary":[],"content":null,"encrypted_content":"test-cipher"},
+        {"type":"reasoning","id":"rs_absent","summary":[],"encrypted_content":"test-cipher"},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"do not change status/content"}]},
+        {"type":"custom_tool_call","call_id":"call_custom","status":"completed","name":"custom","input":"keep"},
+        {"type":"tool_search_call","call_id":"call_search","status":"completed","arguments":{}},
+        {"type":"mcp_call","status":"completed","output":"keep"},
+        {"summary":[],"content":[1],"status":"keep"},
+        {"type":"future_item","content":[1],"status":"keep"},
+        null,
+        "opaque-item"
+    ]);
+    for websocket in [false, true] {
+        let actual = capture_replay_compatibility_request(input.clone(), false, websocket).await;
+        assert_eq!(actual["input"].to_string(), input.to_string());
+    }
+}
+
+#[tokio::test]
+async fn replay_compatibility_should_not_apply_codex_rules_to_api_key_accounts() {
+    let input = json!([{
+        "type":"reasoning","id":"rs_api","status":"completed","summary":[],
+        "content":[{"type":"reasoning_text","text":"API-specific history"}],
+        "encrypted_content":"test-cipher"
+    }]);
+    for websocket in [false, true] {
+        let actual = capture_replay_compatibility_request(input.clone(), true, websocket).await;
+        assert_eq!(actual["input"].to_string(), input.to_string());
+    }
+}
+
+#[tokio::test]
+async fn replay_compatibility_should_preserve_non_array_input_without_guessing() {
+    for input in [
+        Value::Null,
+        json!({"type":"reasoning","status":"keep"}),
+        json!(7),
+    ] {
+        let actual = capture_replay_compatibility_request(input.clone(), false, false).await;
+        assert_eq!(actual["input"], input);
+    }
+}
+
+async fn capture_replay_compatibility_request(
+    input: Value,
+    api_key: bool,
+    websocket: bool,
+) -> Value {
+    let http = MockServer::start().await;
+    let (base_url, websocket_server) = if websocket {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let task =
+            tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut websocket = accept_codex_test_websocket(stream).await;
+                let frame = websocket.next().await.unwrap().unwrap();
+                let body: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                websocket.send(Message::Text(json!({
+                "type":"response.completed","response":{
+                    "id":"resp_replay","model":"gpt-5.4","status":"completed","output":[],
+                    "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}
+                }
+            }).to_string().into())).await.unwrap();
+                body
+            });
+        (base_url, Some(task))
+    } else {
+        Mock::given(method("POST"))
+            .and(path(if api_key {
+                "/responses"
+            } else {
+                "/codex/responses"
+            }))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(CAPTURE_COMPLETED_SSE, "text/event-stream"),
+            )
+            .expect(1)
+            .mount(&http)
+            .await;
+        (http.uri(), None)
+    };
+    let store = Arc::new(MemoryAccountStore::default());
+    if api_key {
+        store
+            .seed_api_key(
+                "acct_provider_contract",
+                base_url.clone(),
+                if websocket {
+                    provider_openai::credential::ApiKeyTransport::PreferWebsocket
+                } else {
+                    provider_openai::credential::ApiKeyTransport::Http
+                },
+            )
+            .await;
+    } else {
+        create_account(&store, "acct_provider_contract").await;
+    }
+    let original = json!({
+        "model":"gpt-5.4","store":false,"stream":true,"input":input,
+        "instructions":"Preserve the original instructions.",
+        "tools":[{"type":"function","name":"echo","parameters":{"type":"object","properties":{"status":{"type":"string"},"content":{"type":"array"}}}}],
+        "future_field":{"status":"keep","content":[1]},
+        "client_metadata":{"extension":{"status":"keep","content":[1]}}
+    });
+    let operation = Operation::Generate(GenerateRequest::from_protocol_payload(
+        ProtocolPayload::json_object("openai", original.as_object().unwrap().clone())
+            .unwrap()
+            .with_context(Map::from_iter([(
+                "use_websocket".to_owned(),
+                json!(websocket),
+            )])),
+    ));
+    let provider = provider_with_base_url(&store, base_url);
+    let mut stream = provider
+        .execute(
+            planned_request("openai", operation),
+            context("req_replay_compatibility", CancellationToken::new()),
+        )
+        .await
+        .unwrap();
+    while let Some(event) = stream.next().await {
+        event.expect("successful upstream completion");
+    }
+    let actual = if let Some(server) = websocket_server {
+        timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap()
+    } else {
+        let requests = http.received_requests().await.unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "compatibility must run before the first send, without retry"
+        );
+        captured_request_body(&requests[0])
+    };
+    for field in ["model", "store", "instructions", "tools", "future_field"] {
+        assert_eq!(
+            actual[field].to_string(),
+            original[field].to_string(),
+            "unexpected change in {field}"
+        );
+    }
+    assert_eq!(
+        actual["client_metadata"]["extension"],
+        original["client_metadata"]["extension"]
+    );
+    actual
+}
+
 const CAPTURE_COMPLETED_SSE: &str = concat!(
     "event: response.completed\n",
     "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_scope_capture\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
@@ -6109,14 +6323,16 @@ fn provider_with_capacity_tracking(
 }
 
 #[tokio::test]
-async fn capacity_feedback_counts_business_rejections_but_excludes_diagnostic_probes() {
+async fn capacity_feedback_only_counts_overload_rejections_and_excludes_diagnostic_probes() {
     use gateway_core::provider_ports::ProviderCooldownPort as _;
 
     for websocket in [false, true] {
-        for (status, code) in [
-            (429, "slow_down"),
-            (503, "server_is_overloaded"),
-            (500, "server_error"),
+        for (status, code, capacity) in [
+            (429, "slow_down", true),
+            (503, "server_is_overloaded", true),
+            (500, "server_error", false),
+            (502, "server_error", false),
+            (503, "service_unavailable_error", false),
         ] {
             for diagnostic in [false, true] {
                 let store = Arc::new(MemoryAccountStore::default());
@@ -6180,8 +6396,11 @@ async fn capacity_feedback_counts_business_rejections_but_excludes_diagnostic_pr
                         "unexpected upstream error: {error:?}"
                     );
                     let after = cooldowns.capacity_evidence(account.id());
-                    if diagnostic {
-                        assert_eq!(after, before, "probe must preserve capacity count and peak");
+                    if diagnostic || !capacity {
+                        assert_eq!(
+                            after, before,
+                            "only explicit overload from ordinary requests may change capacity evidence: {status}/{code}"
+                        );
                     } else {
                         assert_eq!(
                             after.map(|(count, _)| count),
@@ -6280,23 +6499,66 @@ async fn websocket_usage_limit_rejection_preserves_quota_state_for_account_rotat
 }
 
 #[tokio::test]
-async fn capacity_stream_rejection_only_retries_before_semantic_output_on_both_transports() {
-    for (use_websocket, code) in [
-        (false, "server_is_overloaded"),
-        (true, "server_is_overloaded"),
-        (false, "slow_down"),
-        (true, "slow_down"),
-    ] {
+async fn capacity_feedback_in_stream_only_counts_explicit_overload() {
+    use gateway_core::provider_ports::{ProviderCooldownKind, ProviderCooldownPort as _};
+
+    for (use_websocket, (code, message, expected_kind, scored)) in
+        [false, true].into_iter().flat_map(|websocket| {
+            [
+                (
+                    "server_is_overloaded",
+                    "Selected model is at capacity. Please try a different model.",
+                    ProviderErrorKind::UpstreamCapacityUnavailable,
+                    true,
+                ),
+                (
+                    "slow_down",
+                    "slow_down",
+                    ProviderErrorKind::UpstreamCapacityUnavailable,
+                    true,
+                ),
+                (
+                    "invalid_prompt",
+                    "Invalid prompt: we've limited access to this content for safety reasons.",
+                    ProviderErrorKind::InvalidRequest,
+                    false,
+                ),
+                (
+                    "server_error",
+                    "An internal server error occurred.",
+                    ProviderErrorKind::Unavailable,
+                    true,
+                ),
+                (
+                    "unknown_error",
+                    "Unrecognized upstream failure.",
+                    ProviderErrorKind::Unavailable,
+                    false,
+                ),
+            ]
+            .map(|case| (websocket, case))
+        })
+    {
         for semantic_output in [false, true] {
             let store = Arc::new(MemoryAccountStore::default());
             create_account(&store, "acct_provider_contract").await;
+            let account = store.account("acct_provider_contract").expect("account");
+            let cooldowns = Arc::new(MemoryCooldownPort::new());
+            // 距离冻结阈值只差一次，验证非容量错误不会把可调度账号推入冷却。
+            for _ in 0..11 {
+                cooldowns
+                    .record_capacity_failure(account.id(), Duration::from_secs(600), 20)
+                    .await
+                    .expect("seed capacity evidence");
+            }
+            let before = cooldowns.capacity_evidence(account.id());
             let mut events = vec![
                 json!({"type": "response.created", "response": {"id": "resp_capacity", "model": "gpt-5.4"}}),
             ];
             if semantic_output {
                 events.push(json!({"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "delta": "hello"}));
             }
-            let original = json!({"type": "response.failed", "response": {"id": "resp_capacity", "error": {"code": code, "message": "Selected model is at capacity. Please try a different model."}}});
+            let original = json!({"type": "response.failed", "response": {"id": "resp_capacity", "error": {"code": code, "message": message}}});
             events.push(original.clone());
             let (base_url, _http_server, websocket_server) = if use_websocket {
                 let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
@@ -6339,7 +6601,9 @@ async fn capacity_stream_rejection_only_retries_before_semantic_output_on_both_t
             } else {
                 http_generate_operation()
             };
-            let mut stream = provider_with_base_url(&store, base_url)
+            let (provider, pool) =
+                provider_with_capacity_tracking(&store, base_url, Arc::clone(&cooldowns));
+            let mut stream = provider
                 .execute(
                     planned_request("openai", operation),
                     context("req_capacity_stream", CancellationToken::new()),
@@ -6355,15 +6619,48 @@ async fn capacity_stream_rejection_only_retries_before_semantic_output_on_both_t
                         }
                     }
                     Some(Err(error)) => break error,
-                    None => panic!("expected capacity failure"),
+                    None => panic!("expected upstream failure"),
                 }
             };
-            assert_eq!(error.replay_is_safe(), !semantic_output);
-            assert_eq!(error.kind(), ProviderErrorKind::UpstreamCapacityUnavailable);
-            assert_eq!(error.pre_delivery_retry().is_some(), !semantic_output);
-            assert!(provider_openai::openai_failure_affects_account_score(
-                &error
-            ));
+            let capacity = expected_kind == ProviderErrorKind::UpstreamCapacityUnavailable;
+            assert_eq!(
+                error.kind(),
+                expected_kind,
+                "unexpected error for {code}, websocket={use_websocket}, semantic_output={semantic_output}: {error:?}"
+            );
+            assert_eq!(error.replay_is_safe(), capacity && !semantic_output);
+            assert_eq!(error.upstream_status(), None);
+            assert_eq!(
+                error.pre_delivery_retry().is_some(),
+                capacity && !semantic_output
+            );
+            assert_eq!(
+                provider_openai::openai_failure_affects_account_score(&error),
+                scored
+            );
+            let cooldown = cooldowns.read(account.id()).await.expect("read cooldown");
+            if capacity {
+                assert_eq!(
+                    cooldowns
+                        .capacity_evidence(account.id())
+                        .map(|(count, _)| count),
+                    Some(12)
+                );
+                assert_eq!(
+                    cooldown.expect("capacity cooldown").kind(),
+                    ProviderCooldownKind::CapacityFreezeProbe
+                );
+            } else {
+                assert_eq!(
+                    cooldowns.capacity_evidence(account.id()),
+                    before,
+                    "non-capacity error {code} changed capacity evidence"
+                );
+                assert!(
+                    cooldown.is_none(),
+                    "non-capacity error {code} froze the account"
+                );
+            }
             assert_eq!(
                 serde_json::from_str::<Value>(
                     error.raw_upstream_error().expect("raw error").as_str()
@@ -6383,6 +6680,7 @@ async fn capacity_stream_rejection_only_retries_before_semantic_output_on_both_t
             if let Some(server) = websocket_server {
                 server.await.expect("server");
             }
+            pool.shutdown().await;
         }
     }
 }
