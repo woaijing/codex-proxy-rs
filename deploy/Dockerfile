@@ -13,7 +13,7 @@ RUN npm install --global pnpm@11.7.0 \
 COPY frontend ./
 RUN pnpm build
 
-FROM rust:1.98-bookworm@sha256:9a73a5088750b4c95158ab26629c854c3d6fc4b173cb7bc8079ad252d8ed7bfa AS backend-builder
+FROM rust:1.100-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS backend-builder
 
 WORKDIR /app/backend
 ARG TARGETARCH
